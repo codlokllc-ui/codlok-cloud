@@ -149,3 +149,58 @@ Stage Summary:
 - No existing public contract, response format, or existing test was modified.
 - Organizations NOT started. Awaiting review of Auth v1.1 Build Report.
 - Ready For Review: YES.
+
+---
+Task ID: 6
+Agent: main (Codlok Cloud Organizations v1.0 — build)
+Task: Per directive (Spec v1.3), validate Auth v1.1 interface against §12, then build Organizations module per §12 with full test coverage per Rule 12. Do not modify Auth. Do not modify Core Spec.
+
+Work Log:
+- STEP 1 VALIDATION:
+  - Read /home/z/my-project/upload/codlok-cloud-master-spec v1.3.md — confirmed Spec Version 1.3 header.
+  - Confirmed §3.8 Identity Ownership Rule (line 130) and §3.9 Data Ownership Rule (line 132) exist.
+  - Confirmed §10 titled "Auth Module Specification v1.1 — STATUS: FROZEN" (line 284).
+  - Confirmed §10 lists getUser(userId) (line 317) with success data { userId, email, emailVerified } and error USER_NOT_FOUND.
+  - Confirmed §12 "Depends on" line (line 399) reads "Auth.verifySession(), Auth.getUser()".
+  - Verified actual Auth implementation: src/modules/auth/index.ts exports verifySession (line 309) and getUser (line 456) with matching signatures. Auth public surface (line 519) includes both.
+  - Verified Mail.sendInvitationEmail exists as provisional interface (Rule 11) with input shape { to, inviteUrl, inviterName?, workspaceName?, workspaceId? }.
+  - All STEP 1 checks pass. Organizations Spec VALIDATED.
+- STEP 2 BUILD:
+  - Created src/modules/organizations/ folder structure (internal/, __tests__/).
+  - errors.ts: OrgErrorCode enum with 30 codes (UNAUTHORIZED, NOT_A_MEMBER, FORBIDDEN, WORKSPACE_*, MEMBER_*, ROLE_*, PRIVILEGE_ESCALATION, INVITATION_*, etc.).
+  - internal/types.ts: Workspace, Member, Role, Invitation, AuditLogEntry, Caller, Permission types. Per §3.8, Member persists userId only — no email/displayName columns.
+  - internal/permissions.ts: 14-permission immutable catalog (workspace:*, members:*, roles:*, invitations:*, audit:*, ownership:*).
+  - internal/builtin-roles.ts: Owner (14 perms), Admin (12 perms), Member (4 perms) definitions.
+  - internal/store.ts: In-memory store on globalThis (dev-mode module identity workaround). Test-only _resetStoreForTesting escape hatch.
+  - internal/operations.ts: Pure functions enforcing all 3 Mandatory Rules. OrgError class with Codlok-standard codes. Last Owner Rule via _requireNotLastOwner. Privilege Escalation via _requireCanAssignRole + isSubset. Ownership Transfer audited as 'ownership.transferred' (distinct from 'role.assigned').
+  - index.ts: Public interface with 25 functions. Every function: (1) resolves caller via Auth.verifySession, (2) calls internal operation, (3) wraps in StandardResponse via _wrap boundary helper. listMembersWithIdentity resolves email via Auth.getUser on-demand (§3.8). inviteMember/resendInvitation call Mail.sendInvitationEmail (provisional per Rule 11). checkAccess takes userId+workspaceId directly (no token) per §12.
+  - Built 17 API routes under src/app/api/organizations/ — thin wrappers calling Organizations public functions only.
+  - Fixed _helpers import paths (relative path counting for nested [id] folders).
+- STEP 3 TESTS:
+  - Wrote src/modules/organizations/__tests__/organizations.test.ts with 69 tests covering all 3 Rule 12 categories:
+    * BOUNDARY (3 tests): public surface does not expose internal operations/store helpers; errors.ts exports only OrgErrorCode.
+    * FUNCTIONAL (50+ tests): workspace lifecycle, membership, last-owner-cannot-leave, transferOwnership (with confirmation + audit), roles (create/update/delete/assign/remove + built-in protection), permissions (list/check + no user-level grant), invitations (invite/accept/decline/cancel/resend + edge cases).
+    * COMPLIANCE (16 tests): §3.6 StandardResponse shape across 12 samples; §3.8 Identity Ownership (no persisted email); §3.9 Data Ownership (store private); §3.3 Module boundary (source inspection — no reach-ins to Auth/Mail internals); Last Owner Rule; Ownership Transfer Rule (audit + not reversible via role editing); Roles own permissions.
+    * CROSS-WORKSPACE ISOLATION (3 tests): member of A cannot access B; one identity → many workspaces.
+    * UNAUTHORIZED ACCESS (3 tests): no token, invalid token, expired token.
+    * PRIVILEGE ESCALATION (4 tests): Admin cannot create/update role with workspace:delete; cannot assign Owner role; CAN assign subset role.
+  - Initial run: 11 pass / 58 fail — createUser helper needed CODELOK_AUTH_USE_MOCK=true env var to trigger Mail.sendVerificationEmail. Fixed by setting env var in beforeEach.
+  - Second run: 68 pass / 1 fail — expired-token test used _getMockAdapterForTesting (returns global cached mock, not the injected instance). Fixed by using the injected mockAuth directly.
+  - Final run: 69 pass / 0 fail.
+- REGRESSION CHECK:
+  - Auth tests: 36 pass / 0 fail (all v1.0 + v1.1 tests unmodified).
+  - ESLint: clean (0 errors, 0 warnings).
+  - TypeScript: clean (0 errors in organizations/).
+- Wrote src/modules/organizations/README.md with full public interface tables, mandatory rules enforcement, internal architecture, API routes, completed §12 Compliance Checklist, test coverage summary, and Phase 1 trade-offs.
+
+Stage Summary:
+- Organizations v1.0 fully implemented per §12. Ready for review.
+- 69 Organizations tests + 36 Auth tests = 105 total, all passing.
+- All 3 Mandatory Rules enforced and tested: Last Owner, Ownership Transfer (audited), Privilege Escalation.
+- §3.8 Identity Ownership: Member records persist userId only; email resolved on-demand via Auth.getUser.
+- §3.9 Data Ownership: Organizations store is private; no other module reads/writes it.
+- §3.3 Module boundary: only Auth and Mail public interfaces imported; verified by source-inspection test.
+- Rule 12 satisfied: boundary tests + regression tests (Auth unmodified) + compliance tests all present and passing.
+- No spec conflicts found. No blocker reports. Build Report produced per STEP 4.
+- Auth NOT modified. Core Spec NOT modified. No new modules invented.
+- Ready For Review: YES.
