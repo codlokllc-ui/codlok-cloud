@@ -88,3 +88,28 @@ Stage Summary:
 - Blocker Report produced with three decision options: (i) authorize me to perform the Auth v1.1 update as part of this task, (ii) Auth v1.1 was supposed to be applied externally and was not — stop and wait, (iii) other direction.
 - No Organizations code written. No Auth code modified. No spec file modified. Awaiting direction.
 - Ready For Review: NO.
+
+---
+Task ID: 4
+Agent: main (Codlok Cloud Auth v1.1 — STEP A spec verification)
+Task: Per directive, verify spec file actually contains §3.8 Identity Ownership Rule, §3.9 Data Ownership Rule, §10 titled v1.1 with getUser(userId), §12 referencing Auth.getUser(). If any absent, STOP and Blocker Report.
+
+Work Log:
+- Read directive carefully: "The attached Master Specification is your only source of truth. It has already been updated to reflect the approved Auth v1.1 changes — do not treat this directive's claims as fact; verify everything against the actual spec file and actual code before proceeding."
+- Grep'd /home/z/my-project/upload/codlok-cloud-master-spec.md for "Identity Ownership|Data Ownership|3.8|3.9" — no matches.
+- Enumerated §3 subsections via grep for "^### 3\." — only §3.1 through §3.7 present (7 rules, matching §3 header "the seven platform rules").
+- Grep'd spec for "getUser" — no matches anywhere.
+- Read §10 header (line 266): still "## 10. Auth Module Specification v1.0 (fully specified — first module to build)".
+- Read §10 Public Interface (lines 272-305): only 8 original functions listed; no getUser.
+- Read §12 "Depends on" line (line 366): still "Auth.verifySession(), Auth.verifyUser()" — original draft name, not getUser.
+- All 5 STEP A verification points fail: §3.8 absent, §3.9 absent, §10 title is v1.0 (not v1.1), §10 does not list getUser, §12 still references verifyUser.
+- Spec file is byte-for-byte identical to previous two task turns (532 lines; no new content).
+- Wrote Blocker Report to /home/z/my-project/download/AUTH_V1_1_BLOCKER_REPORT.md.
+- Did NOT modify any code, any spec file, or any test. STOPPED per directive ("If any of these is NOT actually present in the file, STOP and return a Blocker Report — do not proceed on the assumption it's there").
+
+Stage Summary:
+- Auth v1.1: NOT IMPLEMENTED. Spec file does not contain the v1.1 changes the directive says are already applied.
+- Blocker Report produced with three decision options: (i) authorize me to apply the spec edits (FIX 1-4) myself as first action of this task, then proceed with STEP B implementation; (ii) you apply the spec edits externally and re-issue; (iii) other direction.
+- Proposed minimal spec wordings for §3.8 Identity Ownership Rule, §3.9 Data Ownership Rule, §10 getUser entry, §12 dependency update, and §3 header count update — all subject to your approval.
+- No code modified. No spec file modified. No tests modified. Existing Auth tests still 30/30 passing.
+- Ready For Review: NO.
