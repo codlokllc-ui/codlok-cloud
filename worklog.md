@@ -1,0 +1,36 @@
+---
+Task ID: 1
+Agent: main (Codlok Cloud Auth build)
+Task: Build Codlok Cloud Auth Module v1.0 per Master Spec §10 (Phase 1, first module per §13 Build Order).
+
+Work Log:
+- Read /home/z/my-project/upload/codlok-cloud-master-spec.md — confirmed task: build Auth only, report per §15.
+- Loaded fullstack-dev skill; initialized Next.js 16 project environment.
+- Installed @supabase/supabase-js for the Auth provider adapter.
+- Created modular folder structure per §4: src/shared, src/config, src/modules/{mail,auth}.
+- Built src/shared/index.ts — StandardResponse type + ok()/fail() constructors + ModuleError class + withStandardResponse() boundary helper. Implements §3.6.
+- Built src/config/index.ts — ConfigurationService interface + EnvironmentVariableConfigurationService backing (Phase 1 env-backed stub for Phase 2 module per §13). Compliant with §3.4 (no hardcoded secrets) and §3.7 (no fake defaults).
+- Built src/modules/mail/index.ts — Mail boundary-level stub (Phase 2 module per §13, but Auth depends on it per §10). Exposes sendVerificationEmail, sendPasswordResetEmail, sendInvitationEmail. In-memory outbox on globalThis for cross-route-handler consistency in Next.js dev mode.
+- Built src/modules/auth/errors.ts — AuthErrorCode enum with all 14 codes from §10 (12 spec-defined + AUTH_PROVIDER_NOT_CONFIGURED for §3.7 + INTERNAL_ERROR catch-all).
+- Built src/modules/auth/adapters/types.ts — AuthProviderAdapter interface (internal contract). Added optional verificationToken field on ProviderUser for Mock adapter to surface tokens (Supabase leaves undefined; Supabase sends its own verification email).
+- Built src/modules/auth/adapters/supabase.ts — SupabaseAuthAdapter (real). Two-stage error translation: Supabase errors → ProviderAuthError (internal code) → ModuleError (Codlok-standard code) at public boundary. Reads credentials via Configuration Service only.
+- Built src/modules/auth/adapters/mock.ts — MockAuthAdapter for tests + demo. NEVER auto-selected (per §3.7); requires explicit CODELOK_AUTH_USE_MOCK=true opt-in.
+- Built src/modules/auth/adapters/factory.ts — resolveAdapter() picks Supabase or Mock based on Configuration Service + env var. Uses globalThis for cached instances (dev-mode module identity workaround).
+- Built src/modules/auth/index.ts — Auth public interface implementing all 8 functions per §10 (registerUser, loginUser, logoutUser, refreshSession, verifySession, resetPassword, changePassword, verifyEmail). Each returns StandardResponse. resetPassword implements anti-enumeration (§10.6). Uses duck-typing (err.name) instead of instanceof for dev-mode module identity.
+- Built 9 API routes under src/app/api/auth/ and src/app/api/mail/outbox — thin wrappers that call Auth's public interface only.
+- Built src/app/page.tsx — interactive demo UI exercising all 8 Auth functions. Shows provider status, Mail outbox, and §10 compliance checklist.
+- Wrote src/modules/auth/__tests__/auth.test.ts — 30 tests covering all 8 functions + every error code + §3.6 compliance + §3.7 compliance + §10 module interaction.
+- Fixed bug: translateProviderError was converting ModuleError (already Codlok-standard) into INTERNAL_ERROR. Fixed to pass ModuleError through directly.
+- Fixed bug: instanceof checks failed in Next.js dev mode (multiple module instances). Switched to duck-typing (err.name === 'ModuleError' / 'ProviderAuthError').
+- Fixed bug: Mail outbox wasn't shared across route handlers in dev mode. Moved to globalThis Symbol.for key.
+- Fixed bug: Verification URL contained userId but no token in Mock mode. Added verificationToken field to ProviderUser; Mock adapter populates it; Auth's buildVerificationUrl uses it when present.
+- All 30 tests pass. ESLint clean. Agent Browser verified full end-to-end flow: register → verify email → login → verify session → refresh → change password → reset password (anti-enumeration) → logout.
+- Wrote src/modules/auth/README.md with full module documentation and completed §10 Core Spec Compliance Checklist.
+
+Stage Summary:
+- Auth Module v1.0 fully implemented per §10. Ready for review.
+- 30 tests passing. Lint clean. Demo UI verified end-to-end via Agent Browser.
+- All 7 Core Spec Compliance Checklist items checked (§10).
+- Phase 1 trade-offs documented in README: Configuration Service is env-backed stub (Phase 2 will replace); Mail is boundary stub (Phase 2 will replace); MockAuthAdapter is explicit opt-in only (compliant with §3.7).
+- No spec violations identified. No blocker reports. Build Report to follow per §15.
+- Next module per §13: Organizations (§12 draft) — re-validate against Auth's real public interface, then build.
