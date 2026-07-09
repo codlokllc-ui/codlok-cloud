@@ -233,3 +233,51 @@ Stage Summary:
 - §16's own line 563 constraint ("strict superset of what Auth/Organizations currently use") is violated by §16's own public interface — internal spec contradiction.
 - No Configuration code written. No Auth/Organizations code modified. No spec modified. Awaiting direction decision.
 - Ready For Review: NO.
+
+---
+Task ID: 8
+Agent: main (Codlok Cloud Configuration Service v1.0 — build)
+Task: Per directive (Spec v1.5, Option B approved), build Configuration Service per §16. Rewire Auth's internal Supabase adapter to call getSecret 3x. Do not modify Auth public interface, Organizations, or §16.
+
+Work Log:
+- STEP 1 VALIDATION (Task 7 already completed): §16 STATUS: FROZEN confirmed. 5 conflicts found between §16 public interface and Auth's stub usage. Option B approved by user: keep §16 as-is, rewire Auth's internal resolveSupabaseCredentials to call getSecret 3x.
+- STEP 2 BUILD:
+  - Created src/config/internal/ folder structure.
+  - internal/errors.ts: ConfigErrorCode enum with 7 codes (SECRET_NOT_CONFIGURED, WORKSPACE_NOT_FOUND, INVALID_KEY, UNKNOWN_MODULE, FEATURE_FLAG_NOT_FOUND, INTERNAL_ERROR, ENCRYPTION_ERROR).
+  - internal/types.ts: SecretRecord (encrypted payload + version/updatedBy/updatedAt), FeatureFlagRecord, AuditLogEntry, ModuleCatalog (6 modules: auth, mail, sms, storage, pay, ai), ConfigError class.
+  - internal/crypto.ts: AES-256-GCM encryption. Master key from CODELOK_CONFIG_MASTER_KEY env var (accepts 64-char hex, 32-char raw, or any string via scrypt). Dev-only deterministic fallback key with warning log. Per-encryption random 12-byte IV. Tamper detection via GCM auth tag.
+  - internal/store.ts: In-memory store on globalThis (dev-mode module identity consistency). Secrets stored as EncryptedSecret (ciphertext+iv+tag). Audit log (metadata only, never value). Versioning helpers (nextVersion, nextFlagVersion).
+  - index.ts: Public interface implementing all 7 §16 functions + listAuditLog (for tests/admin). All return StandardResponse. getSecret takes optional `module` param for audit logging. setSecret/deleteSecret/setFeatureFlag take `actorUserId` for versioning metadata (NOT permission check). getConfigurationService() singleton accessor preserved for backward compatibility with Auth's import. No Organizations import. No testConnection. No SDK client construction.
+- AUTH REWIRING (Option B):
+  - src/modules/auth/adapters/supabase.ts resolveSupabaseCredentials: replaced config.getSecrets([...], workspaceId) with Promise.all([config.getSecret(ws, 'SUPABASE_URL', 'auth'), ...]). Unwrap StandardResponse: success → .data.value; failure → undefined. Preserves null-return behavior for missing credentials. workspaceId ?? '__global__' sentinel for optional case. No unhandled rejections. No different error path.
+  - Auth public interface UNCHANGED. Auth tests UNCHANGED. All 36 Auth tests pass unmodified.
+- STEP 3 TESTS:
+  - Wrote src/config/__tests__/config.test.ts with 48 tests covering all 3 Rule 12 categories:
+    * BOUNDARY (4): public surface exposes only §16 functions; no store/crypto on surface; getConfigurationService returns Configuration; no testConnection.
+    * FUNCTIONAL — secrets (8): setSecret/getSecret round-trip; SECRET_NOT_CONFIGURED; WORKSPACE_NOT_FOUND; INVALID_KEY; deleteSecret; version increment; StandardResponse shape.
+    * FUNCTIONAL — provider status (5): UNKNOWN_MODULE; not configured; fully configured; partially configured; listConfiguredModules.
+    * FUNCTIONAL — feature flags (3): set/get round-trip; FEATURE_FLAG_NOT_FOUND; version increment.
+    * WORKSPACE ISOLATION (4): cross-workspace secret isolation; flag isolation; different values per workspace; getProviderStatus scoped.
+    * MANDATORY RULE 1 — Auditing (3): every getSecret audit-logged; value NEVER in audit log; audit workspace-scoped.
+    * MANDATORY RULE 2 — Permission external (3): no permission check in Configuration; no Organizations import (source inspection, comments stripped); no permission functions on surface.
+    * MANDATORY RULE 3 — Encryption (6): value not plaintext in store; ciphertext ≠ plaintext; decrypt recovers original; unique IV per encryption; tamper detection (wrong key → ENCRYPTION_ERROR); master key from env var.
+    * MANDATORY RULE 4 — Versioning (5): version 1 on first set; increment on update; updatedBy/updatedAt metadata; updatedBy changes with different admin; feature flags versioned.
+    * COMPLIANCE (3): §3.6 StandardResponse on all functions (11 samples); no global fallback; getSecret returns raw value only.
+    * REGRESSION (3): resolveSupabaseCredentials null when no secrets (§3.7); returns credentials when all 3 set; null when only 2 of 3 set.
+  - Initial run: 47 pass / 1 fail — "Configuration does NOT import Organizations" test matched Organizations.checkPermission in a JSDoc comment. Fixed test to strip comments before checking for actual code-level imports/calls.
+  - Final run: 48 pass / 0 fail.
+- REGRESSION CHECK:
+  - All 153 tests pass: 36 Auth + 69 Organizations + 48 Configuration.
+  - ESLint: clean (0 errors, 0 warnings).
+  - TypeScript: 0 new errors (9 pre-existing in examples/skills/bun:test module declaration; none in config/ or auth/).
+- Wrote src/config/README.md with full public interface table, mandatory rules, master-key strategy documentation, internal architecture, Auth rewiring explanation, completed §16 Compliance Checklist, test coverage summary, and Phase 2 trade-offs.
+
+Stage Summary:
+- Configuration Service v1.0 fully implemented per §16. Ready for review.
+- 48 Configuration tests + 36 Auth tests + 69 Organizations tests = 153 total, all passing.
+- All 4 §16 Mandatory Rules enforced and tested: Secret Access Auditing (value never logged), Permission Enforcement external (no Organizations import), Encryption at rest (AES-256-GCM, env-injected master key), Configuration Versioning (version/updatedBy/updatedAt on every change).
+- Master-key strategy: environment-injected (CODELOK_CONFIG_MASTER_KEY), AES-256-GCM, dev-only fallback with warning.
+- Auth rewired per Option B: resolveSupabaseCredentials calls getSecret 3x via Promise.all, unwraps StandardResponse, catches SECRET_NOT_CONFIGURED → undefined → null (preserves §3.7 behavior). Auth public interface unchanged. All 36 Auth tests pass unmodified.
+- No spec conflicts remaining. No blocker reports. Build Report produced per STEP 4.
+- Auth public interface NOT modified. Organizations NOT modified. §16 NOT modified.
+- Ready For Review: YES.
