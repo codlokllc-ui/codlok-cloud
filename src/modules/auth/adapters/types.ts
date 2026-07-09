@@ -97,4 +97,20 @@ export interface AuthProviderAdapter {
 
   /** Verify an email-verification token issued at signUp time. */
   verifyEmailToken(token: string): Promise<ProviderUser | null>;
+
+  /**
+   * Resolve a userId into current identity attributes. (Added in v1.1.)
+   *
+   * Backs the public Auth.getUser(userId) function. Distinct from
+   * getUserByAccessToken: this lookup takes a userId (not a session
+   * token) and is used by other modules (e.g. Organizations) to
+   * resolve a stored userId into identity per §3.8 Identity Ownership
+   * Rule.
+   *
+   * Returns `null` if the userId does not correspond to any user.
+   * Never throws for "user not found" — the public boundary
+   * translates null into USER_NOT_FOUND. May throw ProviderAuthError
+   * for genuine provider failures (auth/admin access denied, etc.).
+   */
+  getUserByUserId(userId: string): Promise<ProviderUser | null>;
 }

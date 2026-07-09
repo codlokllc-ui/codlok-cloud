@@ -1,15 +1,18 @@
-# Codlok Cloud — Auth Module v1.0
+# Codlok Cloud — Auth Module v1.1
 
-> **Status:** Built against Master Spec §10 (Auth Module Specification v1.0 — fully specified, first module to build).
+> **Status:** Built against Master Spec §10 (Auth Module Specification v1.1 — FROZEN).
 > **Build Order:** Phase 1 — Auth (per §13).
+> **v1.1 change:** Added `getUser(userId)` — one additive, non-breaking function. No existing function's signature, behavior, or tests changed. v1.0 implementation/tests preserved unmodified.
 
 ## Purpose
 
 Answers **"who is this user?"** — identity and authentication only. Nothing about roles, workspaces, or permissions (that is Organizations, §9).
 
+Per §3.8 (Identity Ownership Rule), Auth is the sole authoritative source of user identity. Other modules retrieve identity through `Auth.getUser(userId)` and must not persist identity attributes as authoritative data.
+
 Provider adapter: **Supabase Auth** (per §5, §10).
 
-## Public Interface (§10)
+## Public Interface (§10 v1.1)
 
 Every function returns the StandardResponse shape (§3.6). No exceptions.
 
@@ -23,6 +26,15 @@ Every function returns the StandardResponse shape (§3.6). No exceptions.
 | `resetPassword` | `email, ctx?` | `{ sent: true }` | _(none — anti-enumeration)_ |
 | `changePassword` | `userId, oldPassword, newPassword, ctx?` | `{}` | `INVALID_CREDENTIALS`, `WEAK_PASSWORD` |
 | `verifyEmail` | `token, ctx?` | `{ userId, emailVerified: true }` | `INVALID_TOKEN`, `TOKEN_EXPIRED` |
+| `getUser` *(v1.1)* | `userId, ctx?` | `{ userId, email, emailVerified }` | `USER_NOT_FOUND` |
+
+### `getUser(userId)` — added in v1.1
+
+**Purpose:** Resolve a stored `userId` (e.g. from a workspace membership record) into current identity attributes. Distinct from `verifySession`, which validates an access token and returns only `{ userId, valid }` — `getUser` takes a userId directly and returns the identity fields.
+
+**Used by:** Other modules (e.g. Organizations) to comply with §3.8 Identity Ownership Rule. Instead of persisting an `email` column on the Workspace Members table and treating it as authoritative, a module stores only `userId` and calls `Auth.getUser(userId)` whenever identity attributes are needed (member lists, audit logs, invitation flows).
+
+**Compliance:** Backed by `SupabaseAuthAdapter.getUserByUserId` (uses `admin.getUserById` with the service-role key, which never leaves the adapter per §3.4) and `MockAuthAdapter.getUserByUserId` (in-memory `usersById` lookup).
 
 Plus one internal-only code surfaced to callers when the provider is not yet configured (per §3.7): `AUTH_PROVIDER_NOT_CONFIGURED`. And the catch-all: `INTERNAL_ERROR`.
 
@@ -50,7 +62,7 @@ Auth module (src/modules/auth/)
 │   ├── supabase.ts              ← SupabaseAuthAdapter (real Supabase, internal)
 │   └── mock.ts                  ← MockAuthAdapter (testing + demo only)
 └── __tests__/
-    └── auth.test.ts             ← 30 tests covering all 8 functions + compliance
+    └── auth.test.ts             ← 36 tests (30 v1.0 + 6 v1.1) covering all 9 functions + compliance
 ```
 
 ### Adapter selection (per §3.4 + §3.7)
@@ -106,23 +118,26 @@ All error paths (INVALID_CREDENTIALS, EMAIL_NOT_VERIFIED, WEAK_PASSWORD, etc.) a
 
 ## Core Spec Compliance Checklist (§10)
 
-- [x] Uses only the standard API response format (§3.6) — enforced by `withStandardResponse()` and direct `ok()/fail()` calls; verified by 30 tests including a §3.6 compliance test that asserts every response has exactly one of `data` or `error`.
+- [x] Uses only the standard API response format (§3.6) — enforced by `withStandardResponse()` and direct `ok()/fail()` calls; verified by 36 tests (30 v1.0 + 6 v1.1) including §3.6 compliance tests that assert every response has exactly one of `data` or `error`.
 - [x] Reads secrets through the Configuration Service (§3.4) — `resolveSupabaseCredentials()` calls `getConfigurationService().getSecrets()`; no Supabase keys appear in code or config files.
 - [x] Respects workspace isolation (§3.5, §6) — identity is global; `workspaceId` is accepted as `ctx.workspaceId` and passed through to Mail for branding/templates only; it never scopes identity, credentials, or `userId`.
 - [x] Exposes only public interfaces (§3.1, §3.3) — only `src/modules/auth/index.ts` is importable; `adapters/`, `errors.ts`, and `__tests__/` are internal (Next.js path aliases would prevent cross-module imports, but no other module imports them in Phase 1).
 - [x] Does not access other modules' internals (calls `Mail.*` only through its public interface) — verified by reading `src/modules/auth/index.ts`: only `Mail.sendVerificationEmail` and `Mail.sendPasswordResetEmail` are called; no imports from `src/modules/mail/adapters/` or similar internal paths.
 - [x] Uses Codlok-standard error codes, not raw Supabase errors — two-stage translation in `translateProviderError()`; verified by API tests showing all 9 error codes return correctly mapped Codlok codes.
 - [x] Follows module boundary rules (§3.3) — Auth module's `adapters/`, `errors.ts`, and `factory.ts` are never imported by any file outside `src/modules/auth/`.
+- [x] §3.8 Identity Ownership Rule — Auth is the sole authoritative source of user identity; `getUser(userId)` is the sanctioned way for other modules to resolve a userId into identity attributes.
+- [x] §3.9 Data Ownership Rule — Auth owns identity data; no other module may read or write Auth's identity store directly.
 
 ## Test Coverage
 
-30 tests in `src/modules/auth/__tests__/auth.test.ts`:
+36 tests in `src/modules/auth/__tests__/auth.test.ts` (30 from v1.0 unmodified + 6 new for v1.1):
 
-- All 8 public functions: success path + every error code listed in §10
-- §3.6 compliance: every response has exactly one of `data` or `error`
+- All 9 public functions (8 from v1.0 + `getUser` from v1.1): success path + every error code listed in §10 v1.1
+- §3.6 compliance: every response has exactly one of `data` or `error` (separate compliance tests for v1.0 functions and for `getUser`)
 - §3.7 compliance: `AUTH_PROVIDER_NOT_CONFIGURED` surfaced when no provider configured
 - §10 Module Interaction: `registerUser` triggers `Mail.sendVerificationEmail`; `resetPassword` triggers `Mail.sendPasswordResetEmail`
 - §10.6 anti-enumeration: `resetPassword` returns `sent: true` for both existing and non-existent emails
+- v1.1 `getUser`: success path, USER_NOT_FOUND for unknown userId, USER_NOT_FOUND for empty userId, emailVerified reflects current state, response format compliance
 
 Run with: `bun test src/modules/auth`
 
@@ -146,7 +161,7 @@ src/
 │       │   ├── supabase.ts                   ← SupabaseAuthAdapter (real)
 │       │   └── mock.ts                       ← MockAuthAdapter (testing/demo)
 │       └── __tests__/
-│           └── auth.test.ts                  ← 30 tests
+│           └── auth.test.ts                  ← 36 tests (30 v1.0 + 6 v1.1)
 ├── app/
 │   ├── page.tsx                              ← Demo UI
 │   └── api/

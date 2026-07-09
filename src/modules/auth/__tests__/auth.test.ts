@@ -384,6 +384,73 @@ describe('Auth.verifyEmail (§10.8)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// §10 v1.1 getUser (added in v1.1)
+// ---------------------------------------------------------------------------
+
+describe('Auth.getUser (§10 v1.1)', () => {
+  test('SUCCESS: resolves userId → { userId, email, emailVerified }', async () => {
+    const reg = await Auth.registerUser(TEST_EMAIL, TEST_PASSWORD);
+    if (!reg.success) throw new Error('register failed in setup');
+    const targetUserId = reg.data.userId;
+
+    const r = await Auth.getUser(targetUserId);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.userId).toBe(targetUserId);
+    expect(r.data.email).toBe(TEST_EMAIL);
+    expect(r.data.emailVerified).toBe(false); // not yet verified
+  });
+
+  test('SUCCESS: returns updated emailVerified after verifyEmail', async () => {
+    const reg = await Auth.registerUser(TEST_EMAIL, TEST_PASSWORD);
+    if (!reg.success) throw new Error('register failed in setup');
+    const token = mockAdapter._getLatestVerificationToken(TEST_EMAIL);
+    expect(token).toBeTruthy();
+    const v = await Auth.verifyEmail(token!);
+    if (!v.success) throw new Error('verifyEmail failed in setup');
+
+    const r = await Auth.getUser(reg.data.userId);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.emailVerified).toBe(true);
+  });
+
+  test('ERROR: USER_NOT_FOUND for unknown userId', async () => {
+    const r = await Auth.getUser('user_does_not_exist');
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.code).toBe('USER_NOT_FOUND');
+  });
+
+  test('ERROR: USER_NOT_FOUND for empty userId', async () => {
+    const r = await Auth.getUser('');
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.code).toBe('USER_NOT_FOUND');
+  });
+
+  test('§3.6 compliance: success response has data, no error', async () => {
+    const reg = await Auth.registerUser(TEST_EMAIL, TEST_PASSWORD);
+    if (!reg.success) throw new Error('register failed in setup');
+    const r = await Auth.getUser(reg.data.userId);
+    if (!r.success) throw new Error('getUser failed');
+    expect(r.data).not.toBeUndefined();
+    expect((r as { error?: unknown }).error).toBeUndefined();
+  });
+
+  test('§3.6 compliance: error response has error, no data', async () => {
+    const r = await Auth.getUser('user_does_not_exist');
+    if (r.success) throw new Error('expected failure');
+    expect(r.error).not.toBeUndefined();
+    expect(r.error).toHaveProperty('code');
+    expect(r.error).toHaveProperty('message');
+    expect(typeof r.error.code).toBe('string');
+    expect(typeof r.error.message).toBe('string');
+    expect((r as { data?: unknown }).data).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // §3.6 compliance: every response follows the standard shape
 // ---------------------------------------------------------------------------
 

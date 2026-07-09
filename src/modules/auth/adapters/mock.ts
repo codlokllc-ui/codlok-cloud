@@ -218,6 +218,17 @@ export class MockAuthAdapter implements AuthProviderAdapter {
     return { userId: user.userId, email: user.email, emailVerified: true };
   }
 
+  async getUserByUserId(userId: string): Promise<ProviderUser | null> {
+    await Promise.resolve();
+    const user = this.usersById.get(userId);
+    if (!user) return null;
+    return {
+      userId: user.userId,
+      email: user.email,
+      emailVerified: user.emailVerified,
+    };
+  }
+
   // -- Mock-only helpers (test access) -----------------------------------
 
   /** Test helper: lock a user to simulate ACCOUNT_LOCKED. */

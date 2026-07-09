@@ -78,6 +78,17 @@ export interface VerifyEmailData {
   emailVerified: true; // always true after verifyEmail
 }
 
+// Added in v1.1 — backs Auth.getUser(userId) per §10 v1.1 and §3.8 Identity
+// Ownership Rule. Used by other modules (e.g. Organizations) to resolve a
+// stored userId into current identity attributes without holding a session
+// token. emailVerified is `boolean` (not `true`) here because getUser may be
+// called for users who have not yet verified their email.
+export interface GetUserData {
+  userId: string;
+  email: string;
+  emailVerified: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Internal: translate ProviderAuthError → ModuleError with Codlok code
 // ---------------------------------------------------------------------------
@@ -114,6 +125,7 @@ function translateProviderError(err: unknown): ModuleError {
       REFRESH_TOKEN_EXPIRED: AuthErrorCode.REFRESH_TOKEN_EXPIRED,
       INVALID_TOKEN: AuthErrorCode.INVALID_TOKEN,
       TOKEN_EXPIRED: AuthErrorCode.TOKEN_EXPIRED,
+      USER_NOT_FOUND: AuthErrorCode.USER_NOT_FOUND,
     };
     const code = known[providerCode] ?? AuthErrorCode.INTERNAL_ERROR;
     // Use a Codlok-standard message (NOT the provider's raw message) for the
@@ -131,6 +143,7 @@ function translateProviderError(err: unknown): ModuleError {
       [AuthErrorCode.REFRESH_TOKEN_EXPIRED]: 'Refresh token has expired. Please sign in again.',
       [AuthErrorCode.INVALID_TOKEN]: 'Token is invalid.',
       [AuthErrorCode.TOKEN_EXPIRED]: 'Token has expired.',
+      [AuthErrorCode.USER_NOT_FOUND]: 'User not found.',
       [AuthErrorCode.INTERNAL_ERROR]: 'An internal error occurred.',
     };
     return new ModuleError(code, messages[code] ?? 'An internal error occurred.');
@@ -425,6 +438,46 @@ export async function verifyEmail(
 }
 
 // ---------------------------------------------------------------------------
+// §10 v1.1 — getUser(userId, ctx?)
+//
+// Added in v1.1. Resolves a stored userId into current identity attributes.
+// Distinct from verifySession: takes a userId (not an access token) and
+// returns identity fields (not just { userId, valid }).
+//
+// Used by other modules (e.g. Organizations) to comply with §3.8 Identity
+// Ownership Rule — they call this function to resolve identity on demand
+// rather than persisting email/identity snapshots as authoritative data.
+//
+// Per §10 v1.1:
+//   Success data: { userId, email, emailVerified }
+//   Errors: USER_NOT_FOUND
+// ---------------------------------------------------------------------------
+
+export async function getUser(
+  userId: string,
+  ctx?: WorkspaceContext
+): Promise<StandardResponse<GetUserData>> {
+  try {
+    if (!userId) {
+      throw new ModuleError(AuthErrorCode.USER_NOT_FOUND, 'userId is required.');
+    }
+    const adapter = await requireAdapter(ctx);
+    const user = await adapter.getUserByUserId(userId);
+    if (!user) {
+      throw new ModuleError(AuthErrorCode.USER_NOT_FOUND, 'User not found.');
+    }
+    return ok<GetUserData>({
+      userId: user.userId,
+      email: user.email,
+      emailVerified: user.emailVerified,
+    });
+  } catch (err) {
+    const e = translateProviderError(err);
+    return fail(e.code, e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // URL builders (internal — used for Mail links)
 //
 // The base URL is configurable via CODELOK_APP_BASE_URL env var (default
@@ -472,6 +525,7 @@ export const Auth = {
   resetPassword,
   changePassword,
   verifyEmail,
+  getUser, // added in v1.1
 };
 
 export type AuthModule = typeof Auth;

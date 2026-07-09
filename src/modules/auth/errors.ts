@@ -17,6 +17,7 @@
  *   resetPassword:          (no errors exposed — anti-enumeration)
  *   changePassword:         INVALID_CREDENTIALS, WEAK_PASSWORD
  *   verifyEmail:            INVALID_TOKEN, TOKEN_EXPIRED
+ *   getUser (v1.1):         USER_NOT_FOUND
  *
  * Plus one internal-only code surfaced when Supabase credentials are not
  * configured (per §3.7 — module is "disabled" until credentials supplied):
@@ -50,6 +51,9 @@ export const AuthErrorCode = {
   // verifyEmail
   INVALID_TOKEN: 'INVALID_TOKEN',
   TOKEN_EXPIRED: 'TOKEN_EXPIRED',
+
+  // getUser (v1.1)
+  USER_NOT_FOUND: 'USER_NOT_FOUND',
 
   // Provider not configured (§3.7)
   AUTH_PROVIDER_NOT_CONFIGURED: 'AUTH_PROVIDER_NOT_CONFIGURED',

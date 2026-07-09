@@ -292,4 +292,29 @@ export class SupabaseAuthAdapter implements AuthProviderAdapter {
       emailVerified: !!data.user.email_confirmed_at,
     };
   }
+
+  async getUserByUserId(userId: string): Promise<ProviderUser | null> {
+    // Use the service-role admin client to look up a user by id. This is the
+    // privileged path that backs Auth.getUser(userId) — used by other modules
+    // (e.g. Organizations) to resolve a stored userId into identity per §3.8
+    // Identity Ownership Rule. Per §3.4 the service role key never leaves
+    // this adapter.
+    const { data, error } = await this.adminClient.auth.admin.getUserById(userId);
+    if (error) {
+      // Supabase returns a "User not found" error string for unknown ids;
+      // we surface that as null so the public boundary can translate to
+      // USER_NOT_FOUND. Other errors propagate as ProviderAuthError.
+      const lower = error.message.toLowerCase();
+      if (lower.includes('user not found') || lower.includes('not found')) {
+        return null;
+      }
+      throw translateSupabaseError(error);
+    }
+    if (!data.user) return null;
+    return {
+      userId: data.user.id,
+      email: data.user.email ?? '',
+      emailVerified: !!data.user.email_confirmed_at,
+    };
+  }
 }
