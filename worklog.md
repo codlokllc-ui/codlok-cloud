@@ -281,3 +281,36 @@ Stage Summary:
 - No spec conflicts remaining. No blocker reports. Build Report produced per STEP 4.
 - Auth public interface NOT modified. Organizations NOT modified. §16 NOT modified.
 - Ready For Review: YES.
+
+---
+Task ID: 9
+Agent: main (Codlok Cloud Mail v1.0 — Step 1 Validation)
+Task: Per directive (Spec v1.8), validate §17 against actual provisional Mail stub usage by Auth/Organizations. If conflict, STOP and Blocker Report.
+
+Work Log:
+- Read /home/z/my-project/upload/codlok-cloud-master-spec v1.8.md — confirmed Spec Version 1.8 header (line 3) and Platform Freeze Log (lines 9-19).
+- Confirmed §17 STATUS: FROZEN (line 652).
+- Read §17 in full (lines 652-717): public interface (sendVerificationEmail, sendPasswordResetEmail, sendInvitationEmail with idempotencyKey, getDeliveryStatus), idempotency rule, reliability model (queue-and-retry), workspace context, compliance checklist.
+- Read the current provisional Mail stub at src/modules/mail/index.ts: 3 functions taking object-input {to, *Url, workspaceId?}, returning {sent: true, provider, sentAt}. No getDeliveryStatus. No idempotency. In-memory outbox for tests.
+- Grep'd for Mail.send* call sites:
+  - Auth (src/modules/auth/index.ts): registerUser line 208 calls Mail.sendVerificationEmail({to, verificationUrl, workspaceId}); resetPassword line 367 calls Mail.sendPasswordResetEmail({to, resetUrl, workspaceId}).
+  - Organizations (src/modules/organizations/index.ts): inviteMember line 528 and resendInvitation line 593 call Mail.sendInvitationEmail({to, inviteUrl, inviterName, workspaceName, workspaceId}).
+- Grep'd for test dependencies on Mail: Auth tests and Organizations tests import _getOutboxForTesting, _clearOutboxForTesting. Organizations' createUser helper (line 73-78) parses entry.url to extract verification token from outbox. src/app/api/mail/outbox/route.ts and src/app/page.tsx consume the outbox.
+- Cross-checked stub's interface against §17's frozen interface. Found 6 conflicts:
+  1. Argument shape: object-input vs. positional
+  2. URL vs. token (stub takes verificationUrl; §17 takes verificationToken)
+  3. workspaceId optional vs. required-and-first
+  4. Return shape: {sent, provider, sentAt} vs. {queued, messageId}
+  5. getDeliveryStatus absent from stub
+  6. Tests depend on outbox .url field (must be preserved)
+- Determined this is NOT a spec contradiction (unlike Configuration Service blocker where §16 contradicted its own line 563). This is the Rule 11 transition: provisional stub → frozen interface. Rule 11 explicitly permits changing the stub's shape at this point "with no architecture violation and no backward-compatibility promise."
+- §17 line 675 explicitly anticipates this: "the provisional stub's actual signature must be checked in Step 1 — it may differ from this proposed shape. Reconcile during validation, not by assumption."
+- Wrote Blocker Report to /home/z/my-project/download/MAIL_BLOCKER_REPORT.md per §15 format, documenting the 6 conflicts and the single viable path (Path A: rebuild Mail per §17, rewire Auth + Organizations internal calls, preserve test outbox, run full regression).
+- Did NOT write any Mail code. Did NOT modify Auth or Organizations. Did NOT modify spec file. STOPPED per directive.
+
+Stage Summary:
+- Mail: NOT BUILT — §17 conflicts with provisional stub (6 conflicts, all expected per Rule 11 transition).
+- Blocker Report produced with one viable path (Path A) and request for approval.
+- The "blocker" is the Rule 11-mandated transition from provisional stub to frozen interface, not a spec contradiction.
+- No Mail code written. No Auth/Organizations code modified. No spec modified. Awaiting direction decision.
+- Ready For Review: NO.
