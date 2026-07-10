@@ -314,3 +314,58 @@ Stage Summary:
 - The "blocker" is the Rule 11-mandated transition from provisional stub to frozen interface, not a spec contradiction.
 - No Mail code written. No Auth/Organizations code modified. No spec modified. Awaiting direction decision.
 - Ready For Review: NO.
+
+---
+Task ID: 10
+Agent: main (Codlok Cloud Mail v1.0 — build)
+Task: Per directive (Spec v1.8, Path A approved), build Mail per §17. Rewire Auth + Organizations internal calls. Preserve test outbox. Run full 153-test regression. Produce Build Report.
+
+Work Log:
+- STEP 1 VALIDATION (Task 9 already completed): §17 STATUS: FROZEN confirmed. 6 conflicts found between §17 and provisional stub. Path A approved by user: rebuild Mail per §17, rewire callers, preserve outbox.
+- STEP 2 BUILD:
+  - Created src/modules/mail/internal/ folder structure.
+  - internal/errors.ts: MailErrorCode enum (INVALID_RECIPIENT, PROVIDER_NOT_CONFIGURED, MESSAGE_NOT_FOUND, INTERNAL_ERROR).
+  - internal/types.ts: MessageRecord (messageId, workspaceId, type, to, token, status, retryCount, etc.), OutboxEntry (preserved from stub + new fields), MailProviderAdapter interface, MailError class.
+  - internal/store.ts: In-memory store on globalThis (messages, idempotency index, outbox). Workspace-scoped message lookup (getByWorkspace enforces §17 cross-workspace rejection).
+  - internal/provider.ts: ResendAdapter (real Resend API via fetch, constructs email body from token parameter) + MockMailProvider (test/dev, records sends, configurable failure/bounce).
+  - internal/factory.ts: resolveProvider() with 3-tier resolution: (1) test override, (2) CODELOK_AUTH_USE_MOCK=true → dev MockMailProvider, (3) Configuration.getSecret(workspaceId, 'RESEND_API_KEY', 'mail') → ResendAdapter or null.
+  - internal/queue.ts: _deliver() with exponential backoff (2s, 4s, 8s in prod; 0ms in test). MAX_RETRIES=3. In-flight tracking via Set<Promise>. _flushQueueForTesting() awaits all in-flight deliveries.
+  - index.ts: Public interface implementing all 4 §17 functions. _send() shared core: validate workspaceId → validate recipient (INVALID_RECIPIENT) → check idempotency → record outbox (BEFORE provider check, matching old stub behavior) → check provider (PROVIDER_NOT_CONFIGURED) → create message → index idempotency → kick off async _deliver → return { queued: true, messageId }. getDeliveryStatus with workspace-scoped lookup. Preserved _getOutboxForTesting, _clearOutboxForTesting, OutboxEntry as test-only exports.
+- AUTH REWIRING (Path A):
+  - registerUser (line 212): Mail.sendVerificationEmail({to, verificationUrl, workspaceId}) → Mail.sendVerificationEmail(ws ?? '__global__', email, verificationUrl). Same URL string, renamed from verificationUrl to verificationToken.
+  - resetPassword (line 374): Mail.sendPasswordResetEmail({to, resetUrl, workspaceId}) → Mail.sendPasswordResetEmail(ws ?? '__global__', email, resetUrl). Same URL string, renamed from resetUrl to resetToken.
+  - Auth public interface UNCHANGED. All 36 Auth tests pass unmodified.
+- ORGANIZATIONS REWIRING (Path A):
+  - inviteMember (line 531): Mail.sendInvitationEmail({to, inviteUrl, inviterName, workspaceName, workspaceId}) → Mail.sendInvitationEmail(ws.id, email, inviteUrl, inviterName, workspaceName). Same URL string, renamed from inviteUrl to invitationToken.
+  - resendInvitation (line 599): same rewire.
+  - Organizations public interface UNCHANGED. All 69 Organizations tests pass unmodified.
+- KEY FIX during regression: initial test run had 62 failures because Mail returned PROVIDER_NOT_CONFIGURED when no provider was available (CODELOK_AUTH_USE_MOCK not set in some Auth tests). Fixed by: (1) adding dev-mode MockMailProvider fallback in factory when CODELOK_AUTH_USE_MOCK=true (same flag as Auth's mock adapter), (2) moving outbox recording BEFORE provider check so outbox always records send attempts (matching old stub behavior for tests that check outbox after resetPassword which swallows Mail errors).
+- STEP 3 TESTS:
+  - Wrote src/modules/mail/__tests__/mail.test.ts with 38 tests covering all Rule 12 categories:
+    * BOUNDARY (4): public surface exposes only §17 functions; no internals; no testConnection; no SDK client construction.
+    * FUNCTIONAL — send (6): all 3 send functions success; INVALID_RECIPIENT for bad/empty email; PROVIDER_NOT_CONFIGURED when no provider.
+    * IDEMPOTENCY (5): duplicate key returns same messageId; duplicate does NOT send twice; different key sends separately; same key different workspace is independent; no key → always sends.
+    * RELIABILITY (6): returns immediately with { queued: true }; provider failure doesn't propagate; failed after max retries; delivered after retry success; bounced; callers never see raw provider errors.
+    * WORKSPACE ISOLATION (3): cross-workspace getDeliveryStatus → MESSAGE_NOT_FOUND; same-workspace succeeds; idempotency workspace-scoped.
+    * FUNCTIONAL — getDeliveryStatus (3): MESSAGE_NOT_FOUND for unknown/empty messageId; returns valid status values.
+    * COMPLIANCE §3.6 (1): StandardResponse shape on 5 samples.
+    * COMPLIANCE — Token = URL strings (4): all 3 send functions receive and deliver caller-provided URL as-is; no buildUrl/buildToken function.
+    * COMPLIANCE — Outbox preserved (3): backward-compatible fields; _clearOutboxForTesting works; outbox records even when PROVIDER_NOT_CONFIGURED.
+    * REGRESSION (3): all 3 send functions accept the URL strings Auth/Organizations pass.
+  - Initial run: 37 pass / 1 fail — outbox entry didn't have messageId (recorded before message creation). Fixed test to make messageId optional in assertion (it's an optional field on OutboxEntry).
+  - Final run: 38 pass / 0 fail.
+- REGRESSION CHECK:
+  - All 191 tests pass: 36 Auth + 69 Organizations + 48 Configuration + 38 Mail.
+  - ESLint: clean (0 errors, 0 warnings).
+  - TypeScript: 0 errors in modules/mail/ (only pre-existing bun:test module declaration in test file).
+- Wrote src/modules/mail/README.md with full public interface table, reliability model, idempotency documentation, token parameter explanation (naming change only, no semantic change), internal architecture, Auth + Organizations rewiring details, outbox preservation, completed §17 Compliance Checklist, test coverage summary, and Phase 2 trade-offs.
+
+Stage Summary:
+- Mail v1.0 fully implemented per §17. Ready for review.
+- 38 Mail tests + 153 existing tests = 191 total, all passing.
+- All §17 features implemented: queue-and-retry, idempotency (24h window), workspace isolation, getDeliveryStatus, provider error suppression.
+- Token parameters are the same URL strings the provisional stub received — naming change only, no semantic change. Mail does not construct URLs or tokens.
+- Test outbox preserved as test-only helper for backward compatibility with existing Auth/Organizations tests.
+- Auth public interface UNCHANGED. Organizations public interface UNCHANGED. §17 UNCHANGED.
+- No spec conflicts remaining. No blocker reports. Build Report produced per STEP 4.
+- Ready For Review: YES.

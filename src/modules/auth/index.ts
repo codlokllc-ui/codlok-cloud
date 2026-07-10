@@ -205,11 +205,15 @@ export async function registerUser(
         user.verificationToken,
         ctx?.workspaceId
       );
-      await Mail.sendVerificationEmail({
-        to: user.email,
-        verificationUrl,
-        workspaceId: ctx?.workspaceId,
-      });
+      // §17 interface: positional args (workspaceId, to, verificationToken).
+      // verificationToken is the same URL string the provisional stub called
+      // verificationUrl — naming change only, no semantic change (per Build
+      // Report "no business logic migration" documentation).
+      await Mail.sendVerificationEmail(
+        ctx?.workspaceId ?? '__global__',
+        user.email,
+        verificationUrl
+      );
     }
 
     return ok<RegisterUserData>({
@@ -364,11 +368,14 @@ export async function resetPassword(
         await adapter.triggerPasswordResetEmail(email, resetUrl);
         // Mail side-effect (best-effort, never surfaces errors to caller —
         // anti-enumeration). Per §10.6, no errors are exposed at all.
-        await Mail.sendPasswordResetEmail({
-          to: email,
-          resetUrl,
-          workspaceId: ctx?.workspaceId,
-        }).catch(() => {
+        // §17 interface: positional args (workspaceId, to, resetToken).
+        // resetToken is the same URL string the provisional stub called
+        // resetUrl — naming change only, no semantic change.
+        await Mail.sendPasswordResetEmail(
+          ctx?.workspaceId ?? '__global__',
+          email,
+          resetUrl
+        ).catch(() => {
           /* swallow — anti-enumeration */
         });
       } catch {

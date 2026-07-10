@@ -520,18 +520,21 @@ export async function inviteMember(
     const caller = await _resolveCaller(accessToken);
     const inv = _inviteMember(caller, workspaceId, inviteeUserId, roleId);
     // Per §12: inviteMember calls Mail.sendInvitationEmail through Mail's
-    // public interface. Per Rule 11, this interface is provisional.
+    // public interface (§17 frozen interface — positional args).
     const ws = _getWorkspace(caller, workspaceId);
     const role = _getRoleById(inv.roleId);
     const inviterIdentity = await _resolveIdentity(caller.userId);
     const inviteUrl = _buildInviteUrl(inv.token);
-    await Mail.sendInvitationEmail({
-      to: (await _resolveIdentity(inviteeUserId)).email ?? '',
+    // §17 interface: sendInvitationEmail(workspaceId, to, invitationToken,
+    // inviterName, workspaceName). invitationToken is the same URL string
+    // the provisional stub called inviteUrl — naming change only.
+    await Mail.sendInvitationEmail(
+      ws.id,
+      (await _resolveIdentity(inviteeUserId)).email ?? '',
       inviteUrl,
-      inviterName: inviterIdentity.email,
-      workspaceName: ws.name,
-      workspaceId: ws.id,
-    });
+      inviterIdentity.email ?? '',
+      ws.name
+    );
     return _toInvitationView(inv, /* includeToken */ true);
     void role;
   });
@@ -586,17 +589,20 @@ export async function resendInvitation(
   return _wrap(async () => {
     const caller = await _resolveCaller(accessToken);
     const inv = _resendInvitation(caller, workspaceId, invitationId);
-    // Re-send via Mail (provisional per Rule 11).
+    // Re-send via Mail (§17 frozen interface — positional args).
     const ws = _getWorkspace(caller, workspaceId);
     const inviterIdentity = await _resolveIdentity(caller.userId);
     const inviteeIdentity = await _resolveIdentity(inv.inviteeUserId);
-    await Mail.sendInvitationEmail({
-      to: inviteeIdentity.email ?? '',
-      inviteUrl: _buildInviteUrl(inv.token),
-      inviterName: inviterIdentity.email,
-      workspaceName: ws.name,
-      workspaceId: ws.id,
-    });
+    // §17 interface: sendInvitationEmail(workspaceId, to, invitationToken,
+    // inviterName, workspaceName). invitationToken is the same URL string
+    // the provisional stub called inviteUrl — naming change only.
+    await Mail.sendInvitationEmail(
+      ws.id,
+      inviteeIdentity.email ?? '',
+      _buildInviteUrl(inv.token),
+      inviterIdentity.email ?? '',
+      ws.name
+    );
     return _toInvitationView(inv, /* includeToken */ true);
   });
 }
