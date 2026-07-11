@@ -479,3 +479,57 @@ Stage Summary:
 - Configuration catalog additively extended with STRIPE_WEBHOOK_SECRET (no breaking change).
 - No frozen module modified (except additive Configuration catalog entry). No spec conflicts. No blocker reports.
 - Ready For Review: YES.
+
+---
+Task ID: 13
+Agent: main (Codlok Cloud Verify v1.0 — build)
+Task: Per directive (Spec v2.6), validate §20 against existing modules, then build Verify per §20. Run full 306-test regression. Produce Build Report.
+
+Work Log:
+- STEP 1 VALIDATION:
+  - Read /home/z/my-project/upload/codlok-cloud-master-spec v2.6.md — confirmed Spec Version 2.6 header (line 3) and Platform Freeze Log (lines 9-22).
+  - Confirmed §20 STATUS: FROZEN (line 949).
+  - Read §20 in full (lines 949-1040): public interface, Verification Status State Machine, Adapter Absorption Rule, Verification Fact Immutability Rule, Verification Data Minimization Rule, Webhook Handling, Compliance Checklist.
+  - Grep'd src/ for any existing Verify references — all "verify" hits are from Auth's verifySession/verifyEmail, Mail's sendVerificationEmail, and Storage's "verify the object exists" — none about the Verify module.
+  - Configuration catalog had no 'verify' entry — additively added one with STRIPE_IDENTITY_SECRET_KEY + STRIPE_IDENTITY_WEBHOOK_SECRET (same pattern as Pay's Stripe keys, per directive's recommendation).
+  - No frozen module assumes a different Verify shape. STEP 1 PASSED.
+- STEP 2 BUILD:
+  - Created src/modules/verify/internal/ folder structure.
+  - internal/errors.ts: VerifyErrorCode enum (INVALID_VERIFICATION_TYPE, WORKSPACE_NOT_FOUND, PROVIDER_NOT_CONFIGURED, IDEMPOTENCY_KEY_REQUIRED, VERIFICATION_NOT_FOUND, WEBHOOK_SIGNATURE_INVALID, INTERNAL_ERROR).
+  - internal/types.ts: VerificationType canonical enum (INDIVIDUAL_IDENTITY, BUSINESS_VERIFICATION, DOCUMENT_VERIFICATION, ADDRESS_VERIFICATION, AGE_VERIFICATION), VerificationStatus (pending/in_review/approved/rejected/expired), VerificationRecord (verificationId, workspaceId, verificationType, subjectReference, status, provider, providerVerificationId, providerSessionUrl, idempotencyKey, metadata, timestamps), WebhookEventRecord, VerifyProviderAdapter interface, VerifyError class.
+  - internal/store.ts: In-memory store on globalThis (verifications, idempotency index, webhook events). Workspace-scoped lookup. Webhook dedup by provider:providerEventId (permanent).
+  - internal/provider.ts: MockVerifyProvider (in-memory, implements Adapter Absorption Rule in parseWebhookEvent — absorbs requires_input/processing as no-transition, maps verified→approved, needs_review→in_review, declined/canceled→rejected) + StripeIdentityProvider (stub — real Stripe SDK not installed).
+  - internal/factory.ts: resolveProvider() with 3-tier resolution: (1) test override, (2) CODELOK_AUTH_USE_MOCK=true → dev MockVerifyProvider, (3) Configuration.getSecret for STRIPE_IDENTITY_SECRET_KEY + STRIPE_IDENTITY_WEBHOOK_SECRET → StripeIdentityProvider or null.
+  - index.ts: Public interface implementing all 4 §20 functions + processWebhook. createVerificationSession: validate workspace/type/subject/idempotencyKey → check idempotency → resolve provider → create at provider → insert 'pending' record → return { verificationId, providerSessionUrl, status: "pending" }. processWebhook: verify signature → parse event (adapter applies Absorption Rule) → check dedup → apply valid state transition → record event.
+  - Config catalog: additively added verify module entry with STRIPE_IDENTITY_SECRET_KEY + STRIPE_IDENTITY_WEBHOOK_SECRET.
+- STEP 3 TESTS:
+  - Wrote src/modules/verify/__tests__/verify.test.ts with 52 tests covering all Rule 12 categories:
+    * BOUNDARY (4): public surface exposes only §20 functions; no internals; no entityType/entityId; no document/biometric/OCR functions.
+    * FUNCTIONAL — createVerificationSession (7): success; IDEMPOTENCY_KEY_REQUIRED; INVALID_VERIFICATION_TYPE; WORKSPACE_NOT_FOUND; PROVIDER_NOT_CONFIGURED; all 5 canonical types accepted.
+    * IDEMPOTENCY (4): duplicate returns same verificationId; no double session; different key separate; same key different ws separate.
+    * FUNCTIONAL — getVerificationStatus + listVerifications (6): success; VERIFICATION_NOT_FOUND; list with filters.
+    * FUNCTIONAL — getProviderStatus (2): configured/not configured.
+    * WORKSPACE ISOLATION (2): cross-workspace → VERIFICATION_NOT_FOUND; listVerifications workspace-scoped.
+    * WEBHOOK DEDUPLICATION (4): first processes; duplicate is no-op; duplicate doesn't repeat transition; different event IDs separate.
+    * ADAPTER ABSORPTION RULE (8): requires_input stays pending; processing stays pending; requires_input loop stays pending; verified→approved; needs_review→in_review; declined→rejected; canceled→rejected (Stripe mapping); full lifecycle loop→verified→approved.
+    * VERIFICATION FACT IMMUTABILITY (2): core fields never change; no update functions.
+    * DATA MINIMIZATION (3): record has no document/biometric/OCR fields; response has no document data; no document-returning functions.
+    * STATE MACHINE (6): pending→in_review/approved/rejected; in_review→approved; approved terminal; no public function transitions status.
+    * COMPLIANCE §3.6 (1): StandardResponse on 6 samples.
+    * COMPLIANCE — no business-reference fields (2): response has no entityType/entityId; subjectReference stored opaquely.
+    * COMPLIANCE — module boundary (1): Verify does NOT import Storage, Pay, Auth, Organizations, or Mail.
+  - Initial run: 51 pass / 1 fail — module-boundary test expected static import from @/config but processWebhook uses dynamic import. Fixed test to accept both (match on @/config without 'from' prefix, strip comments before checking for forbidden imports).
+  - Final run: 52 pass / 0 fail.
+- REGRESSION CHECK:
+  - All 358 tests pass: 36 Auth + 69 Organizations + 48 Configuration + 38 Mail + 53 Storage + 62 Pay + 52 Verify.
+  - ESLint: clean (0 errors, 0 warnings).
+  - TypeScript: 0 errors in Verify implementation.
+- Wrote src/modules/verify/README.md with full public interface table, canonical verificationType enum, state machine, Adapter Absorption Rule mapping table, Fact Immutability, Data Minimization, idempotency (PERMANENT), webhook dedup, internal architecture, completed §20 Compliance Checklist, test coverage summary, and Phase 3 trade-offs.
+
+Stage Summary:
+- Verify v1.0 fully implemented per §20. Ready for review.
+- 52 Verify tests + 306 existing tests = 358 total, all passing.
+- All §20 features implemented: canonical verificationType enum, REQUIRED idempotency (PERMANENT), Verification Status State Machine, Adapter Absorption Rule (requires_input/processing absorbed, canceled→rejected), Verification Fact Immutability, Verification Data Minimization, webhook deduplication (permanent), no business-reference fields.
+- Configuration catalog additively extended with verify module entry (no breaking change).
+- No frozen module modified (except additive Configuration catalog entry). No spec conflicts. No blocker reports.
+- Ready For Review: YES.

@@ -98,6 +98,10 @@ export const MODULE_CATALOG: ModuleRequirement[] = [
     requiredKeys: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
   },
   {
+    moduleId: 'verify',
+    requiredKeys: ['STRIPE_IDENTITY_SECRET_KEY', 'STRIPE_IDENTITY_WEBHOOK_SECRET'],
+  },
+  {
     moduleId: 'ai',
     requiredKeys: ['OPENAI_API_KEY'],
   },
