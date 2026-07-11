@@ -95,7 +95,7 @@ export const MODULE_CATALOG: ModuleRequirement[] = [
   },
   {
     moduleId: 'pay',
-    requiredKeys: ['STRIPE_SECRET_KEY'],
+    requiredKeys: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
   },
   {
     moduleId: 'ai',
