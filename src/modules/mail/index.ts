@@ -136,7 +136,9 @@ async function _send(
   token: string,
   idempotencyKey?: string,
   inviterName?: string,
-  workspaceName?: string
+  workspaceName?: string,
+  subject?: string,
+  body?: string
 ): Promise<StandardResponse<SendResultData>> {
   try {
     // 1. Validate workspaceId (required per §17 line 697).
@@ -196,6 +198,8 @@ async function _send(
       token,
       inviterName,
       workspaceName,
+      subject,
+      body,
       idempotencyKey,
       status: 'queued',
       retryCount: 0,
@@ -270,6 +274,63 @@ export async function sendInvitationEmail(
 }
 
 // ---------------------------------------------------------------------------
+// §17 v1.2 — sendEmail(workspaceId, to, subject, body, idempotencyKey?)
+//
+// Added in v1.2. Unlike the three template-bound functions above, sendEmail
+// accepts arbitrary caller-supplied subject and body — Mail performs ZERO
+// business templating and ZERO content interpretation for this function.
+// Mail still owns provider selection, queue-and-retry, idempotency, and
+// delivery tracking exactly as for the other three functions.
+//
+// Mail validates only: recipient format, required fields present, provider
+// payload limits (subject/body length caps). It never validates business
+// correctness of the content.
+// ---------------------------------------------------------------------------
+
+/** Maximum subject length (provider payload limit). */
+const MAX_SUBJECT_LENGTH = 998; // RFC 5321 practical limit
+/** Maximum body length (provider payload limit). */
+const MAX_BODY_LENGTH = 1_000_000; // 1MB — generous for transactional email
+
+export async function sendEmail(
+  workspaceId: string,
+  to: string,
+  subject: string,
+  body: string,
+  idempotencyKey?: string
+): Promise<StandardResponse<SendResultData>> {
+  try {
+    // Validate content (INVALID_CONTENT per §17 v1.2).
+    if (!subject || typeof subject !== 'string') {
+      throw new MailError(MailErrorCode.INVALID_CONTENT, 'subject is required.');
+    }
+    if (!body || typeof body !== 'string') {
+      throw new MailError(MailErrorCode.INVALID_CONTENT, 'body is required.');
+    }
+    if (subject.length > MAX_SUBJECT_LENGTH) {
+      throw new MailError(
+        MailErrorCode.INVALID_CONTENT,
+        `subject exceeds maximum length of ${MAX_SUBJECT_LENGTH} characters.`
+      );
+    }
+    if (body.length > MAX_BODY_LENGTH) {
+      throw new MailError(
+        MailErrorCode.INVALID_CONTENT,
+        `body exceeds maximum length of ${MAX_BODY_LENGTH} characters.`
+      );
+    }
+
+    // Delegate to _send with type='generic'. The token is empty (not used
+    // for generic emails — subject/body are the content). The provider
+    // adapter uses subject/body directly for type='generic' instead of
+    // constructing from type+token.
+    return _send(workspaceId, to, 'generic', '', idempotencyKey, undefined, undefined, subject, body);
+  } catch (err) {
+    return _mailErrorToResponse(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // §17 getDeliveryStatus
 // ---------------------------------------------------------------------------
 
@@ -321,6 +382,7 @@ export const Mail = {
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendInvitationEmail,
+  sendEmail, // added in v1.2
   getDeliveryStatus,
 };
 

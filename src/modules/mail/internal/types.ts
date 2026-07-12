@@ -9,7 +9,7 @@
 // Message types
 // ---------------------------------------------------------------------------
 
-export type MessageType = 'verification' | 'password_reset' | 'invitation';
+export type MessageType = 'verification' | 'password_reset' | 'invitation' | 'generic';
 
 export type DeliveryStatus =
   | 'queued'
@@ -38,6 +38,10 @@ export interface MessageRecord {
   inviterName?: string;
   /** For invitation emails only. */
   workspaceName?: string;
+  /** For generic emails only (v1.2) — caller-supplied subject, used as-is. */
+  subject?: string;
+  /** For generic emails only (v1.2) — caller-supplied body, used as-is. */
+  body?: string;
   /** Optional idempotency key (§17 binding v1 rule). */
   idempotencyKey?: string;
   status: DeliveryStatus;
@@ -79,6 +83,10 @@ export interface ProviderSendInput {
   token: string;
   inviterName?: string;
   workspaceName?: string;
+  /** For generic emails only (v1.2) — caller-supplied subject, used as-is. */
+  subject?: string;
+  /** For generic emails only (v1.2) — caller-supplied body, used as-is. */
+  body?: string;
 }
 
 export interface ProviderSendResult {

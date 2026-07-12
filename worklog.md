@@ -557,3 +557,76 @@ Stage Summary:
 - The conflict is between two frozen specs (§21 and §17), not a provisional-to-frozen transition (unlike the Mail blocker, which was Rule 11).
 - No Notifications code written. No Mail code modified. No spec modified. Awaiting direction decision.
 - Ready For Review: NO.
+
+---
+Task ID: 15
+Agent: main (Codlok Cloud Mail v1.2 + Notifications v1.0)
+Task: Per directive (Spec v3.4, Option A approved), implement Mail v1.2 (additive sendEmail), re-validate §21, then build Notifications per §21.
+
+Work Log:
+- STEP A — MAIL v1.2:
+  - errors.ts: additively added INVALID_CONTENT to MailErrorCode.
+  - types.ts: additively added 'generic' to MessageType; added subject?/body? optional fields to MessageRecord and ProviderSendInput.
+  - provider.ts: updated ResendAdapter._subject() and _html() with 'generic' case — uses input.subject/input.body as-is, no template construction. MockMailProvider already passes the full ProviderSendInput through.
+  - queue.ts: updated _deliverInner to pass subject/body to provider.send().
+  - index.ts: extended _send() to accept subject?/body? params and pass them to store.insert. Added sendEmail(workspaceId, to, subject, body, idempotencyKey?) public function with INVALID_CONTENT validation (missing subject/body, payload limits). Exported sendEmail in Mail public surface.
+  - Tests: added 10 new tests for sendEmail (success, subject/body used as-is, INVALID_RECIPIENT, INVALID_CONTENT for missing subject/body/oversized, PROVIDER_NOT_CONFIGURED, idempotency duplicate/no-double, existing functions unchanged).
+  - Regression: all 38 existing Mail tests pass unmodified. All 368 total existing tests pass.
+  - Mail v1.2 total: 48 tests (38 original + 10 new), all passing.
+
+- STEP B — RE-VALIDATE §21 against Mail v1.2:
+  - §21 line 1098: content.email = {subject, body}. Mail v1.2 sendEmail accepts (workspaceId, to, subject, body, idempotencyKey?). MATCH.
+  - §21 line 1059: "calling Mail/SMS/Push once each per selected channel". Mail.sendEmail exists. MATCH.
+  - §21 line 1068: "Mail/SMS/Push own their own retry". Mail.sendEmail delegates to the same queue-and-retry. MATCH.
+  - §21 line 1118: "Does not call Auth, Organizations, or any future Audit/Jobs module". Notifications calls only Mail. MATCH.
+  - No remaining conflicts. §21 VALIDATED.
+
+- STEP C — BUILD NOTIFICATIONS:
+  - Created src/modules/notifications/ folder structure.
+  - internal/errors.ts: NotificationErrorCode enum (WORKSPACE_NOT_FOUND, INVALID_RECIPIENT, INVALID_CONTENT, NO_AVAILABLE_CHANNEL, PROVIDER_NOT_CONFIGURED, IDEMPOTENCY_KEY_REQUIRED, NOTIFICATION_NOT_FOUND, NOTIFICATION_ALREADY_DISPATCHING, INTERNAL_ERROR).
+  - internal/types.ts: ChannelType, Recipient, EmailContent/SmsContent/PushContent, NotificationContent, NotificationRequest, OverallStatus (queued/dispatching/completed/cancelled), ChannelStatus (pending/dispatched/failed/skipped), ChannelResult, NotificationRecord (with _transient fields for recipient/content held during dispatch only), WorkspacePreferences, NotificationError.
+  - internal/store.ts: In-memory store on globalThis (notifications, idempotency index — permanent, workspace preferences). Workspace-scoped lookup. Channel result updates.
+  - index.ts: Public interface implementing all 5 §21 functions.
+    * sendNotification: validate workspace/recipient/content/idempotencyKey → check idempotency → compute dispatch plan (content ∩ preferences ∩ configured providers) → NO_AVAILABLE_CHANNEL if empty → create 'queued' record → dispatch (transition to 'dispatching', call Mail.sendEmail once for email channel) → transition to 'completed' → clear transient recipient/content.
+    * getNotification: workspace-scoped lookup, returns overallStatus + per-channel results.
+    * listNotifications: workspace-scoped, filters by overallStatus/dateFrom/dateTo.
+    * cancelNotification: only succeeds while overallStatus === "queued" → NOTIFICATION_ALREADY_DISPATCHING otherwise.
+    * getChannelStatus: returns configured status for email/sms/push.
+  - Channel selection: _computeDispatchPlan intersects content (what the caller composed) × preferences (workspace-enabled channels) × configured providers (email if Mail provider available; sms/push false until those modules exist).
+  - Each transport called at most once: Mail.sendEmail called exactly once per notification. No retry (Mail owns retry internally). No cross-channel fallback.
+  - Recipient data transient: _transientRecipient/_transientContent on the record, cleared after dispatch. getNotification does NOT return recipient data.
+  - Content ownership: subject/body passed to Mail.sendEmail EXACTLY as supplied — no truncation, interpolation, or template generation. INVALID_CONTENT for missing required fields.
+  - Idempotency: required, permanent retention. Same workspaceId + idempotencyKey → returns original notificationId.
+  - Cancellation boundary: cancelNotification only succeeds while overallStatus === "queued".
+  - overallStatus: "completed" deliberately does NOT imply success/failure — per-channel status holds real detail.
+  - Module boundary: Notifications calls only Mail (for email). Does NOT call Auth, Organizations, or any future Audit/Jobs module. Verified by source-inspection test.
+
+- STEP C TESTS:
+  - 41 tests covering all Rule 12 categories:
+    * BOUNDARY (5): public surface exposes §21 functions; no internals; no content transformation functions; no cross-channel fallback functions; module boundary (does NOT import Auth/Organizations).
+    * FUNCTIONAL — sendNotification (8): success; IDEMPOTENCY_KEY_REQUIRED; INVALID_RECIPIENT (missing/bad email); INVALID_CONTENT (missing content/subject); NO_AVAILABLE_CHANNEL; WORKSPACE_NOT_FOUND.
+    * IDEMPOTENCY (3): duplicate returns same notificationId; different key separate; same key different ws separate.
+    * CHANNEL SELECTION (4): email content + enabled + configured → dispatched; email disabled → NO_AVAILABLE_CHANNEL; email+sms content, sms not configured → email only; getChannelStatus shows email configured, sms/push not.
+    * CANCELLATION BOUNDARY (3): queued → cancelled; completed → NOTIFICATION_ALREADY_DISPATCHING; unknown → NOTIFICATION_NOT_FOUND.
+    * FUNCTIONAL — getNotification + listNotifications (4): success with per-channel status; NOTIFICATION_NOT_FOUND; list with filters; WORKSPACE_NOT_FOUND.
+    * FUNCTIONAL — getChannelStatus (1): returns configured status.
+    * WORKSPACE ISOLATION (2): cross-workspace getNotification → NOT_FOUND; listNotifications workspace-scoped.
+    * CONTENT OWNERSHIP (2): subject/body passed exactly as supplied to Mail.sendEmail; no transformation functions.
+    * EACH TRANSPORT AT MOST ONCE (2): Mail.sendEmail called exactly once; no retry on failure.
+    * RECIPIENT DATA TRANSIENT (2): cleared after dispatch; getNotification doesn't return recipient.
+    * OVERALL STATUS MODEL (2): "completed" not "succeeded"; per-channel status holds detail.
+    * COMPLIANCE §3.6 (1): StandardResponse on 6 samples.
+    * COMPLIANCE — no business-reference fields (1): response has no entityType/entityId.
+
+- REGRESSION CHECK:
+  - All 409 tests pass: 36 Auth + 69 Organizations + 48 Configuration + 48 Mail (38 v1.0 + 10 v1.2) + 53 Storage + 62 Pay + 52 Verify + 41 Notifications.
+  - ESLint: clean. TypeScript: 0 errors.
+  - All 38 original Mail tests pass unmodified (Mail v1.2 is purely additive).
+
+Stage Summary:
+- Mail v1.2: sendEmail() added additively (v1.0 → v1.2). 10 new tests, all 38 original tests pass unmodified.
+- Notifications v1.0: fully implemented per §21. 41 tests, all passing.
+- Total: 409 tests across 8 modules, all passing.
+- All §21 features: channel selection intersection, required permanent idempotency, no content transformation, cancellation boundary, each transport called at most once, recipient data transient, overallStatus carries no success/failure judgment.
+- No frozen module's public interface changed (Mail v1.2 is additive-only, same pattern as Auth v1.0→v1.1).
+- Ready For Review: YES.

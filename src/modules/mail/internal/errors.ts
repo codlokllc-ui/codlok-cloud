@@ -7,9 +7,12 @@
  */
 
 export const MailErrorCode = {
-  // sendVerificationEmail / sendPasswordResetEmail / sendInvitationEmail
+  // sendVerificationEmail / sendPasswordResetEmail / sendInvitationEmail / sendEmail
   INVALID_RECIPIENT: 'INVALID_RECIPIENT',
   PROVIDER_NOT_CONFIGURED: 'PROVIDER_NOT_CONFIGURED',
+
+  // sendEmail (v1.2)
+  INVALID_CONTENT: 'INVALID_CONTENT',
 
   // getDeliveryStatus
   MESSAGE_NOT_FOUND: 'MESSAGE_NOT_FOUND',

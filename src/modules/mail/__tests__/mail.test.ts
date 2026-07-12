@@ -496,3 +496,88 @@ describe('REGRESSION — Auth/Organizations compatibility', () => {
     expect(r.success).toBe(true);
   });
 });
+
+// ===========================================================================
+// 11. sendEmail (v1.2 — generic email with arbitrary subject/body)
+// ===========================================================================
+
+describe('FUNCTIONAL — sendEmail (v1.2)', () => {
+  test('SUCCESS: returns { queued: true, messageId }', async () => {
+    const r = await Mail.sendEmail(WS_1, GOOD_EMAIL, 'Your inspection is scheduled', '<p>Tuesday at 3pm</p>');
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.queued).toBe(true);
+    expect(r.data.messageId).toMatch(/^msg_/);
+  });
+
+  test('SUCCESS: subject and body used as-is — no template construction', async () => {
+    await Mail.sendEmail(WS_1, GOOD_EMAIL, 'Custom Subject', '<p>Custom Body</p>');
+    await _flushQueueForTesting();
+    // MockMailProvider records what it was asked to send.
+    expect(mockProvider.sends).toHaveLength(1);
+    expect(mockProvider.sends[0].type).toBe('generic');
+    expect(mockProvider.sends[0].subject).toBe('Custom Subject');
+    expect(mockProvider.sends[0].body).toBe('<p>Custom Body</p>');
+  });
+
+  test('INVALID_RECIPIENT for bad email format', async () => {
+    const r = await Mail.sendEmail(WS_1, BAD_EMAIL, 'subject', 'body');
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.code).toBe('INVALID_RECIPIENT');
+  });
+
+  test('INVALID_CONTENT for missing subject', async () => {
+    const r = await Mail.sendEmail(WS_1, GOOD_EMAIL, '', 'body');
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.code).toBe('INVALID_CONTENT');
+  });
+
+  test('INVALID_CONTENT for missing body', async () => {
+    const r = await Mail.sendEmail(WS_1, GOOD_EMAIL, 'subject', '');
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.code).toBe('INVALID_CONTENT');
+  });
+
+  test('INVALID_CONTENT for oversized subject', async () => {
+    const r = await Mail.sendEmail(WS_1, GOOD_EMAIL, 'x'.repeat(999), 'body');
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.code).toBe('INVALID_CONTENT');
+  });
+
+  test('PROVIDER_NOT_CONFIGURED when no provider available', async () => {
+    _setProviderForTesting(null);
+    process.env.CODELOK_AUTH_USE_MOCK = '';
+    const r = await Mail.sendEmail(WS_1, GOOD_EMAIL, 'subject', 'body');
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.code).toBe('PROVIDER_NOT_CONFIGURED');
+  });
+
+  test('Idempotency: duplicate key returns same messageId', async () => {
+    const r1 = await Mail.sendEmail(WS_1, GOOD_EMAIL, 'subject', 'body', 'idem-generic-001');
+    const r2 = await Mail.sendEmail(WS_1, GOOD_EMAIL, 'subject', 'body', 'idem-generic-001');
+    if (!r1.success || !r2.success) throw new Error('sendEmail failed');
+    expect(r2.data.messageId).toBe(r1.data.messageId);
+  });
+
+  test('Idempotency: duplicate does NOT send twice', async () => {
+    await Mail.sendEmail(WS_1, GOOD_EMAIL, 'subject', 'body', 'idem-generic-no-double');
+    await Mail.sendEmail(WS_1, GOOD_EMAIL, 'subject', 'body', 'idem-generic-no-double');
+    await _flushQueueForTesting();
+    expect(mockProvider.sends.filter((s) => s.type === 'generic')).toHaveLength(1);
+  });
+
+  test('No existing function changed — all 3 template functions still work', async () => {
+    // Verify sendVerificationEmail still uses template (not generic).
+    await Mail.sendVerificationEmail(WS_1, GOOD_EMAIL, 'https://verify.example.com?t=abc');
+    await _flushQueueForTesting();
+    expect(mockProvider.sends[0].type).toBe('verification');
+    // Verify it does NOT have subject/body (template constructs them internally).
+    expect(mockProvider.sends[0].subject).toBeUndefined();
+    expect(mockProvider.sends[0].body).toBeUndefined();
+  });
+});

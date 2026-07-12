@@ -72,6 +72,9 @@ export class ResendAdapter implements MailProviderAdapter {
         return 'Reset your password';
       case 'invitation':
         return `Invitation to join ${input.workspaceName ?? 'workspace'}`;
+      case 'generic':
+        // v1.2: caller-supplied subject, used as-is — no template construction.
+        return input.subject ?? '';
     }
   }
 
@@ -88,6 +91,9 @@ export class ResendAdapter implements MailProviderAdapter {
           : `<p>You've been invited to join ${input.workspaceName ?? 'a workspace'}.</p>`;
         return `${inviter}<p>Click the link below to accept:</p><p>${link}</p>`;
       }
+      case 'generic':
+        // v1.2: caller-supplied body, used as-is — no template construction.
+        return input.body ?? '';
     }
   }
 }

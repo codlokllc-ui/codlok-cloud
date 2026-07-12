@@ -74,6 +74,8 @@ async function _deliverInner(
         token: record.token,
         inviterName: record.inviterName,
         workspaceName: record.workspaceName,
+        subject: record.subject,
+        body: record.body,
       });
 
       if (result.status === 'bounced') {
