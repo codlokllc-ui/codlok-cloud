@@ -307,10 +307,28 @@ async function _getConfiguredProviders(workspaceId: string): Promise<{
     }
   }
 
-  // SMS and Push modules don't exist yet — always not configured.
+  // SMS: check if SMS provider is configured (same pattern as email).
+  let smsConfigured = false;
+  if (process.env.CODELOK_AUTH_USE_MOCK === 'true') {
+    smsConfigured = true;
+  } else {
+    try {
+      const { getConfigurationService } = await import('@/config');
+      const config = getConfigurationService();
+      const [sidR, tokenR] = await Promise.all([
+        config.getSecret(workspaceId, 'TWILIO_ACCOUNT_SID', 'notifications'),
+        config.getSecret(workspaceId, 'TWILIO_AUTH_TOKEN', 'notifications'),
+      ]);
+      smsConfigured = sidR.success && tokenR.success;
+    } catch {
+      smsConfigured = false;
+    }
+  }
+
+  // Push module doesn't exist yet — always not configured.
   return {
     email: emailConfigured,
-    sms: false,
+    sms: smsConfigured,
     push: false,
   };
 }
@@ -416,8 +434,25 @@ export async function sendNotification(
       channels.email = { status: 'skipped' };
     }
 
-    // SMS channel: not configured (module doesn't exist yet).
-    if (dispatchPlan.sms) {
+    // SMS channel: call SMS.sendSms exactly once.
+    if (dispatchPlan.sms && notificationRequest.content.sms && notificationRequest.recipient.phone) {
+      try {
+        const { SMS } = await import('@/modules/sms');
+        const smsR = await SMS.sendSms(
+          workspaceId,
+          notificationRequest.recipient.phone,
+          notificationRequest.content.sms.body,
+          `${idempotencyKey}:sms` // derive a sub-key for the SMS channel
+        );
+        if (smsR.success) {
+          channels.sms = { status: 'dispatched', messageId: smsR.data.smsId };
+        } else {
+          channels.sms = { status: 'failed', errorCode: smsR.error.code };
+        }
+      } catch {
+        channels.sms = { status: 'failed', errorCode: NotificationErrorCode.INTERNAL_ERROR };
+      }
+    } else if (dispatchPlan.sms) {
       channels.sms = { status: 'skipped' };
     }
 

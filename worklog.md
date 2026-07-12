@@ -630,3 +630,66 @@ Stage Summary:
 - All §21 features: channel selection intersection, required permanent idempotency, no content transformation, cancellation boundary, each transport called at most once, recipient data transient, overallStatus carries no success/failure judgment.
 - No frozen module's public interface changed (Mail v1.2 is additive-only, same pattern as Auth v1.0→v1.1).
 - Ready For Review: YES.
+
+---
+Task ID: 16
+Agent: main (Codlok Cloud SMS v1.0)
+Task: Per directive (Spec v3.7), validate §22, then build SMS per §22. Rewire Notifications to call SMS. Run full 409-test regression. Produce Build Report.
+
+Work Log:
+- STEP 1 VALIDATION:
+  - Confirmed §22 STATUS: FROZEN (line 1145).
+  - Grep'd src/ for existing SMS references — only Notifications (channel type 'sms', content shape, preferences) and Configuration (sms catalog entry with TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN). Neither assumes a specific SMS public interface.
+  - Verified Notifications' channel-selection logic (content.sms && preferences.smsEnabled && configuredProviders.sms) works — just needs internal rewiring (update _getConfiguredProviders + add SMS.sendSms dispatch). No public interface change.
+  - Verified §22 sendSms(workspaceId, recipient, message, idempotencyKey) signature matches what Notifications needs to call (recipient.phone → recipient, content.sms.body → message).
+  - STEP 1 PASSED.
+- STEP 2 BUILD:
+  - internal/errors.ts: SmsErrorCode enum (WORKSPACE_NOT_FOUND, INVALID_RECIPIENT, INVALID_CONTENT, MESSAGE_TOO_LONG, IDEMPOTENCY_KEY_REQUIRED, RECIPIENT_OPTED_OUT, PROVIDER_NOT_CONFIGURED, SEND_FAILED, SMS_NOT_FOUND, WEBHOOK_EVENT_ALREADY_PROCESSED, INTERNAL_ERROR).
+  - internal/types.ts: SmsStatus (queued/sending/sent/delivered/failed), SmsRecord (with _recipient and _message transient fields — never in public responses), InboundEventRecord, WebhookEventRecord, SmsProviderAdapter interface, SmsError class.
+  - internal/store.ts: In-memory store on globalThis (smsRecords, idempotency index — permanent, providerMessageIndex for webhook workspace resolution, webhookEvents for dedup, inboundEvents, workspaceRouting for inbound destination→workspace). Workspace-scoped lookup.
+  - internal/provider.ts: MockSmsProvider (in-memory, supports optOutNext/failNext simulation, normalizes provider statuses) + TwilioSmsProvider (stub).
+  - internal/factory.ts: resolveProvider() with 3-tier resolution (test override, CODELOK_AUTH_USE_MOCK, Configuration.getSecret for TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN). Added _getTestProvider() for processWebhook (which has no workspaceId to resolve a provider normally).
+  - index.ts: 5 public functions per §22:
+    * sendSms: validate workspace/E.164/message/idempotencyKey → check idempotency → resolve provider → create 'queued' record → send with retry (MAX_RETRIES=3) → opt-out detection (RECIPIENT_OPTED_OUT — no retry, no bypass) → SEND_FAILED after exhaustion → transition to 'sent' (resting state) → index providerMessageId for webhook resolution.
+    * getSms: workspace-scoped lookup. NO recipient field in response.
+    * listSms: workspace-scoped, filters by status/dateFrom/dateTo. NO recipient filter.
+    * getProviderStatus: returns twilio/termii/vonage configured status.
+    * processWebhook(payload): NO workspaceId parameter. Resolves workspace via providerMessageId lookup (outbound) or destination-number routing (inbound). Deduplicates by provider event ID (permanent). Handles delivery receipts, inbound STOP/START/HELP keyword detection.
+  - State machine: queued → sending → sent → (delivered|failed). sent is resting (not guaranteed-final). delivered/failed are terminal.
+  - MESSAGE_TOO_LONG: 10 segments × 160 chars = 1600 char cap. Rejection, not silent splitting.
+  - E.164 validation only, no carrier lookup.
+  - RECIPIENT_OPTED_OUT: normalized from provider opt-out rejection (regex matches "opt.*out" and 21610). No bypass, no category exemption.
+  - SEND_FAILED: only after MAX_RETRIES exhausted.
+- NOTIFICATIONS REWIRING:
+  - Updated _getConfiguredProviders: SMS now checked (CODELOK_AUTH_USE_MOCK or Configuration TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN). Was hardcoded false.
+  - Updated SMS dispatch path: calls SMS.sendSms() when dispatchPlan.sms && content.sms && recipient.phone. Was just marking as 'skipped'.
+  - 4 existing Notifications tests updated to reflect SMS now being configured in mock mode (was testing SMS-as-unconfigured — same pattern as Mail sendEmail rewire).
+- STEP 3 TESTS:
+  - 48 SMS tests covering all Rule 12 categories:
+    * BOUNDARY (5): 5 functions only (no getDeliveryStatus); no internals; no content transformation; no opt-out exemption; module boundary (does NOT import Auth/Organizations/Notifications/Mail/Pay/Verify).
+    * FUNCTIONAL — sendSms (10): success; IDEMPOTENCY_KEY_REQUIRED; INVALID_RECIPIENT (non-E.164, empty); INVALID_CONTENT; MESSAGE_TOO_LONG (oversized, no silent splitting); PROVIDER_NOT_CONFIGURED; RECIPIENT_OPTED_OUT (Twilio 21610, no retry/no bypass); SEND_FAILED after retry exhaustion.
+    * IDEMPOTENCY (4): duplicate returns same smsId; no double send; different key separate; same key different ws separate.
+    * FUNCTIONAL — getSms (2): success with NO recipient; SMS_NOT_FOUND.
+    * FUNCTIONAL — listSms (3): lists with NO recipient in items; filters by status; no recipient filter.
+    * FUNCTIONAL — getProviderStatus (1): configured status per provider.
+    * WORKSPACE ISOLATION (2): cross-workspace getSms → SMS_NOT_FOUND; listSms workspace-scoped.
+    * STATE MACHINE (6): queued→sending→sent; sent→delivered (webhook); sent→failed (webhook); sent stays sent forever (resting); delivered terminal; failed terminal.
+    * WEBHOOK DEDUPLICATION (3): first processes; duplicate is no-op; duplicate doesn't repeat transition.
+    * WEBHOOK WORKSPACE RESOLUTION (3): outbound via providerMessageId lookup; inbound via destination-number matching; processWebhook takes NO workspaceId (1 param).
+    * RECIPIENT NEVER EXPOSED (3): getSms has no recipient; listSms items have no recipient; record holds _recipient internally (transient).
+    * COMPLIANCE §3.6 (1): StandardResponse on 6 samples.
+    * COMPLIANCE — no business-reference fields (1): no entityType/entityId.
+    * COMPLIANCE — E.164 only (3): valid numbers accepted; invalid rejected; no carrier lookup function.
+  - Fixed 2 bugs during testing: (1) opt-out regex `opt.?out` didn't match "opted out" → changed to `opt.*out`. (2) test typo `toUndefined` → `toBeUndefined`.
+  - 4 Notifications tests updated (SMS now configured in mock mode).
+- REGRESSION CHECK:
+  - All 457 tests pass: 36 Auth + 69 Organizations + 48 Configuration + 48 Mail + 53 Storage + 62 Pay + 52 Verify + 41 Notifications + 48 SMS.
+  - ESLint: clean. TypeScript: 0 errors.
+
+Stage Summary:
+- SMS v1.0 fully implemented per §22. Ready for review.
+- 48 SMS tests + 409 existing tests = 457 total, all passing.
+- All §22 features: 5 functions only (no getDeliveryStatus), E.164 validation only, MESSAGE_TOO_LONG rejection (no silent splitting), required permanent idempotency, RECIPIENT_OPTED_OUT normalization (no bypass), SEND_FAILED after retry exhaustion, state machine (sent is resting), webhook workspace resolution (no workspaceId param), permanent webhook dedup, recipient never exposed in public responses.
+- Notifications rewired to call SMS.sendSms() — 4 tests updated to reflect SMS now being configured.
+- No frozen module's public interface changed. No spec conflicts. No blocker reports.
+- Ready For Review: YES.

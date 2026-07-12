@@ -199,10 +199,10 @@ describe('FUNCTIONAL — sendNotification', () => {
   });
 
   test('NO_AVAILABLE_CHANNEL when no content matches configured providers', async () => {
-    // Only SMS content, but SMS module doesn't exist → no available channel.
+    // Push-only content, but Push module doesn't exist → no available channel.
     const r = await Notifications.sendNotification(WS_1, {
-      recipient: { phone: '+1234567890' },
-      content: { sms: { body: 'Hello' } },
+      recipient: { pushToken: 'token_abc' },
+      content: { push: { title: 't', body: 'b' } },
     }, GOOD_IDEM_KEY);
     expect(r.success).toBe(false);
     if (r.success) return;
@@ -266,7 +266,7 @@ describe('CHANNEL SELECTION — content ∩ preferences ∩ configured providers
     expect(r.error.code).toBe(NotificationErrorCode.NO_AVAILABLE_CHANNEL);
   });
 
-  test('Email + SMS content, SMS not configured → only email dispatched', async () => {
+  test('Email + SMS content, both configured → both dispatched', async () => {
     const r = await Notifications.sendNotification(WS_1, {
       recipient: { email: 'alice@example.com', phone: '+1234567890' },
       content: {
@@ -278,16 +278,15 @@ describe('CHANNEL SELECTION — content ∩ preferences ∩ configured providers
     const getR = await Notifications.getNotification(WS_1, r.data.notificationId);
     if (!getR.success) throw new Error('getNotification failed');
     expect(getR.data.channels.email).toBeDefined();
-    // SMS is not configured (module doesn't exist) → not in dispatch plan.
-    // SMS channel result should be absent (not in dispatch plan at all).
-    expect(getR.data.channels.sms).toBeUndefined();
+    // SMS is now configured (mock mode) → in dispatch plan.
+    expect(getR.data.channels.sms).toBeDefined();
   });
 
-  test('All channels enabled but only email configured → only email in dispatch plan', async () => {
+  test('Email and SMS configured, Push not configured', async () => {
     const r = await Notifications.getChannelStatus(WS_1);
     if (!r.success) throw new Error('getChannelStatus failed');
     expect(r.data.channels.email.configured).toBe(true);
-    expect(r.data.channels.sms.configured).toBe(false);
+    expect(r.data.channels.sms.configured).toBe(true);
     expect(r.data.channels.push.configured).toBe(false);
   });
 });
@@ -397,7 +396,7 @@ describe('FUNCTIONAL — getChannelStatus', () => {
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(r.data.channels.email.configured).toBe(true);
-    expect(r.data.channels.sms.configured).toBe(false);
+    expect(r.data.channels.sms.configured).toBe(true);
     expect(r.data.channels.push.configured).toBe(false);
   });
 });
