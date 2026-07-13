@@ -1,9 +1,10 @@
 'use client';
 
 /**
- * Codlok Cloud Dashboard v1.0 — Track A (Frontend, Mock Data)
+ * Codlok Cloud Dashboard v1.0 — Phase 1 (Platform Wiring)
  *
- * Per Master Spec §23. Mock data throughout — no backend calls.
+ * Auth + Organizations are now wired to real APIs.
+ * Module detail pages still use mock data (Phase 2 will wire those).
  *
  * Binding Rules (§23):
  * - Every module detail page shows ONLY opaque infrastructure IDs, status,
@@ -14,7 +15,9 @@
  * - No Retry Policy UI anywhere.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { useAuth } from '@/lib/auth-context';
+import { orgsApi, type Workspace } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -58,14 +61,57 @@ type View =
 // ===========================================================================
 
 export default function Home() {
-  const [view, setView] = useState<View>({ type: 'login' });
+  const { user, loading, login, register, logout } = useAuth();
+  const [view, setView] = useState<View>({ type: 'products' });
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [busy, setBusy] = useState(false);
+
+  // If not authenticated, show login/register.
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-background text-foreground">
+        <Toaster richColors position="top-right" />
+        <AuthView
+          mode={authMode}
+          onToggleMode={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+          onLogin={async (email, password) => {
+            setBusy(true);
+            const r = await login(email, password);
+            setBusy(false);
+            if (!r.success) toast.error(r.error ?? 'Login failed');
+            else toast.success('Logged in');
+            return r;
+          }}
+          onRegister={async (email, password) => {
+            setBusy(true);
+            const r = await register(email, password);
+            setBusy(false);
+            if (!r.success) toast.error(r.error ?? 'Registration failed');
+            else toast.success('Registered and verified! You can now sign in.');
+            return r;
+          }}
+          busy={busy}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Toaster richColors position="top-right" />
-      {view.type === 'login' && <LoginView onLogin={() => setView({ type: 'products' })} />}
       {view.type === 'products' && (
         <ProductsView
+          accessToken={user.accessToken}
+          userEmail={user.email}
+          onLogout={logout}
           onNavigate={setView}
         />
       )}
@@ -73,23 +119,43 @@ export default function Home() {
         <ProductView
           productId={view.productId}
           tab={view.tab}
+          accessToken={user.accessToken}
+          userEmail={user.email}
+          onLogout={logout}
           onNavigate={setView}
           onTabChange={(tab) => setView({ type: 'product', productId: view.productId, tab })}
         />
       )}
-      {view.type === 'secret-templates' && <SecretTemplatesView onNavigate={setView} />}
-      {view.type === 'ai-builder' && <AIBuilderView onNavigate={setView} />}
-      {view.type === 'freeze-log' && <FreezeLogView onNavigate={setView} />}
-      {view.type === 'coming-soon' && <ComingSoonView title={view.title} onNavigate={setView} />}
+      {view.type === 'secret-templates' && <SecretTemplatesView onNavigate={setView} userEmail={user.email} onLogout={logout} />}
+      {view.type === 'ai-builder' && <AIBuilderView onNavigate={setView} userEmail={user.email} onLogout={logout} />}
+      {view.type === 'freeze-log' && <FreezeLogView onNavigate={setView} userEmail={user.email} onLogout={logout} />}
+      {view.type === 'coming-soon' && <ComingSoonView title={view.title} onNavigate={setView} userEmail={user.email} onLogout={logout} />}
     </div>
   );
 }
 
 // ===========================================================================
-// Login View
+// Auth View (Login + Register — real API calls)
 // ===========================================================================
 
-function LoginView({ onLogin }: { onLogin: () => void }) {
+function AuthView({ mode, onToggleMode, onLogin, onRegister, busy }: {
+  mode: 'login' | 'register';
+  onToggleMode: () => void;
+  onLogin: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  onRegister: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  busy: boolean;
+}) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleSubmit = async () => {
+    if (mode === 'login') {
+      await onLogin(email, password);
+    } else {
+      await onRegister(email, password);
+    }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-md">
@@ -98,20 +164,25 @@ function LoginView({ onLogin }: { onLogin: () => void }) {
             <Shield className="h-6 w-6 text-primary-foreground" />
           </div>
           <CardTitle className="text-2xl">Codlok Cloud</CardTitle>
-          <CardDescription>Sign in to your platform dashboard</CardDescription>
+          <CardDescription>{mode === 'login' ? 'Sign in to your platform dashboard' : 'Create your account'}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" placeholder="admin@codlok.cloud" defaultValue="admin@codlok.cloud" />
+            <Input id="email" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" placeholder="••••••••" defaultValue="demo" />
+            <Input id="password" type="password" placeholder="•••••••• (min 8 chars)" value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
         </CardContent>
-        <CardFooter>
-          <Button className="w-full" onClick={onLogin}>Sign In</Button>
+        <CardFooter className="flex flex-col gap-2">
+          <Button className="w-full" disabled={busy || !email || !password} onClick={handleSubmit}>
+            {busy ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Register'}
+          </Button>
+          <Button variant="link" size="sm" onClick={onToggleMode}>
+            {mode === 'login' ? "Don't have an account? Register" : 'Already have an account? Sign in'}
+          </Button>
         </CardFooter>
       </Card>
     </div>
@@ -122,7 +193,12 @@ function LoginView({ onLogin }: { onLogin: () => void }) {
 // Shared Sidebar (Platform-level navigation)
 // ===========================================================================
 
-function PlatformSidebar({ onNavigate, active }: { onNavigate: (v: View) => void; active: string }) {
+function PlatformSidebar({ onNavigate, active, userEmail, onLogout }: {
+  onNavigate: (v: View) => void;
+  active: string;
+  userEmail?: string;
+  onLogout?: () => void;
+}) {
   return (
     <div className="flex h-screen w-64 flex-col border-r bg-muted/30">
       <div className="flex h-14 items-center gap-2 border-b px-6">
@@ -140,7 +216,12 @@ function PlatformSidebar({ onNavigate, active }: { onNavigate: (v: View) => void
         <SidebarLink icon={FlaskConical} label="API Explorer" active={false} onClick={() => onNavigate({ type: 'coming-soon', title: 'API Explorer' })} />
         <SidebarLink icon={ScrollText} label="Freeze Log" active={active === 'freeze-log'} onClick={() => onNavigate({ type: 'freeze-log' })} />
         <Separator className="my-3" />
-        <SidebarLink icon={Settings} label="Account" active={false} onClick={() => onNavigate({ type: 'coming-soon', title: 'Account' })} />
+        {userEmail && (
+          <div className="px-3 py-2">
+            <p className="truncate text-xs text-muted-foreground">{userEmail}</p>
+            <button onClick={onLogout} className="mt-1 text-xs text-primary hover:underline">Sign Out</button>
+          </div>
+        )}
       </nav>
     </div>
   );
@@ -164,38 +245,112 @@ function SidebarLink({ icon: Icon, label, active, onClick }: { icon: React.Eleme
 // Products View
 // ===========================================================================
 
-function ProductsView({ onNavigate }: { onNavigate: (v: View) => void }) {
+function ProductsView({ accessToken, userEmail, onLogout, onNavigate }: {
+  accessToken: string;
+  userEmail: string;
+  onLogout: () => void;
+  onNavigate: (v: View) => void;
+}) {
+  const [products, setProducts] = useState<Workspace[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const loadProducts = useCallback(async () => {
+    setLoading(true);
+    const r = await orgsApi.listWorkspaces(accessToken);
+    if (r.success && r.data) {
+      setProducts(r.data);
+    } else {
+      toast.error('Failed to load products');
+      setProducts([]);
+    }
+    setLoading(false);
+  }, [accessToken]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { loadProducts(); }, [loadProducts]);
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return;
+    setCreating(true);
+    const r = await orgsApi.createWorkspace(accessToken, newName.trim(), newDesc.trim() || undefined);
+    setCreating(false);
+    if (r.success && r.data) {
+      toast.success(`Product "${r.data.name}" created`);
+      setNewName('');
+      setNewDesc('');
+      setShowCreate(false);
+      loadProducts();
+    } else {
+      toast.error(r.error?.message ?? 'Failed to create product');
+    }
+  };
+
   return (
     <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="products" />
+      <PlatformSidebar onNavigate={onNavigate} active="products" userEmail={userEmail} onLogout={onLogout} />
       <div className="flex-1 overflow-y-auto">
         <div className="border-b px-8 py-4">
           <div className="flex items-center justify-between">
             <h1 className="text-xl font-semibold">Products</h1>
-            <Button size="sm" onClick={() => toast.info('Create Product is not available in Track A (mock).')}>
+            <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
               <Plus className="mr-1 h-4 w-4" /> Create Product
             </Button>
           </div>
         </div>
-        <div className="grid gap-4 p-8 md:grid-cols-2 lg:grid-cols-3">
-          {MOCK_PRODUCTS.map((p) => (
-            <Card key={p.id} className="cursor-pointer hover:border-primary transition-colors" onClick={() => onNavigate({ type: 'product', productId: p.id, tab: 'overview' })}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">{p.name}</CardTitle>
-                  <Badge variant={p.status === 'active' ? 'default' : 'destructive'}>{p.status}</Badge>
-                </div>
-                <CardDescription>{p.description}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-muted-foreground">Created {formatTimestamp(p.createdAt)}</p>
+        {showCreate && (
+          <div className="border-b bg-muted/30 px-8 py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="flex-1 space-y-1">
+                <Label htmlFor="new-name" className="text-xs">Product Name</Label>
+                <Input id="new-name" placeholder="My Product" value={newName} onChange={(e) => setNewName(e.target.value)} />
+              </div>
+              <div className="flex-1 space-y-1">
+                <Label htmlFor="new-desc" className="text-xs">Description (optional)</Label>
+                <Input id="new-desc" placeholder="What does this product do?" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
+              </div>
+              <Button size="sm" disabled={creating || !newName.trim()} onClick={handleCreate}>
+                {creating ? 'Creating...' : 'Create'}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
+            </div>
+          </div>
+        )}
+        {loading ? (
+          <div className="p-8"><p className="text-muted-foreground">Loading products...</p></div>
+        ) : products.length === 0 ? (
+          <div className="p-8">
+            <Card>
+              <CardContent className="py-12 text-center">
+                <Package className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">No products yet. Create your first product to get started.</p>
               </CardContent>
-              <CardFooter className="flex items-center justify-end">
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              </CardFooter>
             </Card>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <div className="grid gap-4 p-8 md:grid-cols-2 lg:grid-cols-3">
+            {products.map((p) => (
+              <Card key={p.id} className="cursor-pointer hover:border-primary transition-colors" onClick={() => onNavigate({ type: 'product', productId: p.id, tab: 'overview' })}>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">{p.name}</CardTitle>
+                    <Badge variant="default">Active</Badge>
+                  </div>
+                  <CardDescription>{p.description ?? 'No description'}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xs text-muted-foreground">Created {formatTimestamp(p.createdAt)}</p>
+                </CardContent>
+                <CardFooter className="flex items-center justify-end">
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                </CardFooter>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -205,14 +360,28 @@ function ProductsView({ onNavigate }: { onNavigate: (v: View) => void }) {
 // Product View (with tabs: Overview, Modules, Health, Team, etc.)
 // ===========================================================================
 
-function ProductView({ productId, tab, onNavigate, onTabChange }: {
+function ProductView({ productId, tab, accessToken, userEmail, onLogout, onNavigate, onTabChange }: {
   productId: string;
   tab: string;
+  accessToken: string;
+  userEmail: string;
+  onLogout: () => void;
   onNavigate: (v: View) => void;
   onTabChange: (tab: string) => void;
 }) {
-  const product = MOCK_PRODUCTS.find((p) => p.id === productId);
-  if (!product) return <div>Product not found</div>;
+  const [product, setProduct] = useState<Workspace | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    orgsApi.getWorkspace(accessToken, productId).then((r) => {
+      if (r.success && r.data) setProduct(r.data);
+      setLoading(false);
+    });
+  }, [accessToken, productId]);
+  if (loading) return <div className="flex h-screen items-center justify-center"><p className="text-muted-foreground">Loading product...</p></div>;
+  if (!product) return <div className="flex h-screen items-center justify-center"><p className="text-muted-foreground">Product not found</p></div>;
   const modules = getMockModules(productId);
 
   const tabs = [
@@ -228,7 +397,7 @@ function ProductView({ productId, tab, onNavigate, onTabChange }: {
 
   return (
     <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="products" />
+      <PlatformSidebar onNavigate={onNavigate} active="products" userEmail={userEmail} onLogout={onLogout} />
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Product header with tabs */}
         <div className="border-b">
@@ -283,7 +452,7 @@ function ProductView({ productId, tab, onNavigate, onTabChange }: {
 // Overview Tab
 // ===========================================================================
 
-function OverviewTab({ product, modules, onNavigate }: { product: Product; modules: ModuleStatus[]; onNavigate: (v: View) => void }) {
+function OverviewTab({ product, modules, onNavigate }: { product: Workspace; modules: ModuleStatus[]; onNavigate: (v: View) => void }) {
   const operational = modules.filter((m) => m.status === 'operational').length;
   const notConfigured = modules.filter((m) => m.status === 'not_configured').length;
 
@@ -293,7 +462,7 @@ function OverviewTab({ product, modules, onNavigate }: { product: Product; modul
         <StatCard label="Modules" value={modules.length} icon={Cpu} />
         <StatCard label="Operational" value={operational} icon={CheckCircle2} />
         <StatCard label="Not Configured" value={notConfigured} icon={AlertTriangle} />
-        <StatCard label="Status" value={product.status === 'active' ? 'Active' : 'Suspended'} icon={Activity} />
+        <StatCard label="Status" value="Active" icon={Activity} />
       </div>
       <Card>
         <CardHeader>
@@ -371,8 +540,6 @@ function ModulesTab({ productId, onNavigate }: { productId: string; onNavigate: 
 // ===========================================================================
 
 function ModuleDetailPage({ moduleId, productId }: { moduleId: string; productId: string }) {
-  const product = MOCK_PRODUCTS.find((p) => p.id === productId);
-  if (!product) return <div>Product not found</div>;
   const modules = getMockModules(productId);
   const moduleInfo = modules.find((m) => m.moduleId === moduleId);
   if (!moduleInfo) return <div>Module not found</div>;
@@ -638,7 +805,7 @@ function TeamTab() {
 // Secret Templates View (§23: copy-not-inherit, mocked Apply Template)
 // ===========================================================================
 
-function SecretTemplatesView({ onNavigate }: { onNavigate: (v: View) => void }) {
+function SecretTemplatesView({ onNavigate, userEmail, onLogout }: { onNavigate: (v: View) => void; userEmail: string; onLogout: () => void }) {
   const [applying, setApplying] = useState<string | null>(null);
 
   const handleApply = (templateId: string, templateName: string) => {
@@ -652,7 +819,7 @@ function SecretTemplatesView({ onNavigate }: { onNavigate: (v: View) => void }) 
 
   return (
     <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="secret-templates" />
+      <PlatformSidebar onNavigate={onNavigate} active="secret-templates" userEmail={userEmail} onLogout={onLogout} />
       <div className="flex-1 overflow-y-auto">
         <div className="border-b px-8 py-4">
           <h1 className="text-xl font-semibold">Secret Templates</h1>
@@ -718,10 +885,10 @@ function SecretTemplatesView({ onNavigate }: { onNavigate: (v: View) => void }) 
 // AI Builder View
 // ===========================================================================
 
-function AIBuilderView({ onNavigate }: { onNavigate: (v: View) => void }) {
+function AIBuilderView({ onNavigate, userEmail, onLogout }: { onNavigate: (v: View) => void; userEmail: string; onLogout: () => void }) {
   return (
     <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="ai-builder" />
+      <PlatformSidebar onNavigate={onNavigate} active="ai-builder" userEmail={userEmail} onLogout={onLogout} />
       <div className="flex-1 overflow-y-auto">
         <div className="border-b px-8 py-4">
           <h1 className="text-xl font-semibold">AI Builder</h1>
@@ -775,10 +942,10 @@ function AIBuilderView({ onNavigate }: { onNavigate: (v: View) => void }) {
 // Freeze Log View
 // ===========================================================================
 
-function FreezeLogView({ onNavigate }: { onNavigate: (v: View) => void }) {
+function FreezeLogView({ onNavigate, userEmail, onLogout }: { onNavigate: (v: View) => void; userEmail: string; onLogout: () => void }) {
   return (
     <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="freeze-log" />
+      <PlatformSidebar onNavigate={onNavigate} active="freeze-log" userEmail={userEmail} onLogout={onLogout} />
       <div className="flex-1 overflow-y-auto">
         <div className="border-b px-8 py-4">
           <h1 className="text-xl font-semibold">Freeze Log</h1>
@@ -827,10 +994,10 @@ function FreezeLogView({ onNavigate }: { onNavigate: (v: View) => void }) {
 // Coming Soon View
 // ===========================================================================
 
-function ComingSoonView({ title, onNavigate }: { title: string; onNavigate: (v: View) => void }) {
+function ComingSoonView({ title, onNavigate, userEmail, onLogout }: { title: string; onNavigate: (v: View) => void; userEmail: string; onLogout: () => void }) {
   return (
     <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="" />
+      <PlatformSidebar onNavigate={onNavigate} active="" userEmail={userEmail} onLogout={onLogout} />
       <div className="flex flex-1 items-center justify-center">
         <Card className="max-w-md">
           <CardHeader className="text-center">
