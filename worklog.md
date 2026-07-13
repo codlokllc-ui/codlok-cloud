@@ -693,3 +693,38 @@ Stage Summary:
 - Notifications rewired to call SMS.sendSms() — 4 tests updated to reflect SMS now being configured.
 - No frozen module's public interface changed. No spec conflicts. No blocker reports.
 - Ready For Review: YES.
+
+---
+Task ID: 17
+Agent: main (Codlok Cloud Dashboard v1.0 — Track A)
+Task: Per directive (Spec v3.9), build Dashboard v1.0 Track A (frontend, mock data). Login, Products, Product dashboard, Modules, module detail pages, Health, Team, AI Builder, Freeze Log, Secret Templates UI (mocked). No backend calls, no real Configuration wiring.
+
+Work Log:
+- Read §23 in full (lines 1237-1326). Confirmed Spec Version 3.9, Platform Freeze Log entry for Dashboard (Track A).
+- Created src/lib/mock-data.ts with all mock data types and instances. Mock data contains ONLY opaque infrastructure IDs (VER-xxx, FIL-xxx, PAY-xxx, NOT-xxx, SMS-xxx) per §23 Binding Display Rule. No business names, no filenames, no entity descriptions.
+- Replaced src/app/page.tsx with the dashboard SPA (state-based view switching, since the project constraint says only / route is visible). 920 lines covering all Track A screens.
+- Updated src/app/layout.tsx metadata to "Codlok Cloud Dashboard".
+- Screens built:
+  * Login: mock auth, redirects to Products.
+  * Products: 3 mock products (AcadID, SREMA, Droppday), Create Product button (mock).
+  * Product dashboard with 8 tabs: Overview, Modules, Health, Team, API Keys, Monitoring, Logs, Settings.
+  * Overview: aggregate stats (modules count, operational, not configured, status) + module list.
+  * Modules: grid of all 9 modules with status badges, clickable to detail pages.
+  * Module detail pages: Verify (VER-xxx IDs, status, type, provider, timestamps), Storage (FIL-xxx IDs, state, mime, size, timestamps), Pay (PAY-xxx IDs, status, amount, currency, provider, timestamps), Notifications (NOT-xxx IDs, overallStatus, channels, timestamps), SMS (SMS-xxx IDs, status, provider, timestamps — NO recipient), Auth/Organizations/Configuration/Mail (simple detail with opaque field descriptions).
+  * Health: per-module status cards with provider and last activity.
+  * Team: "Team" (not "Organizations") with §12 context note, Owner/Admin/Member roles, Invite Member button (mock).
+  * AI Builder: mock prompt interface with explanation of what it will eventually do.
+  * Freeze Log: table mirroring Platform Freeze Log with all 11 entries.
+  * Secret Templates: 5 templates (Stripe, Twilio, Resend, Supabase, S3), required note "Templates are copied into each product's Configuration when applied. Editing a template never changes existing products.", Track B warning, mocked Apply Template interaction.
+  * Coming Soon: OpenAPI, SDK, API Explorer, Account — all show "Coming Soon" with explanation that no ownership pass has been done.
+- Agent Browser verified: Login → Products → AcadID product → Overview → Modules → Verify detail (opaque IDs only) → Team (correct naming) → Secret Templates (required note present) → Freeze Log → Coming Soon. All screens render correctly, no errors.
+- All 457 existing backend tests pass unmodified. ESLint clean. TypeScript clean.
+
+Stage Summary:
+- Dashboard v1.0 Track A complete. All screens built with mock data.
+- §23 Binding Display Rule enforced: every module detail page shows only opaque IDs, status, timestamps, provider name — no business entities.
+- "Team" naming used (not "Organizations") with §12 context.
+- Secret Templates includes required note and Track B blocked warning. Apply Template is mocked UI only.
+- OpenAPI/SDK/API Explorer are "Coming Soon" placeholders — no implied functionality.
+- No Retry Policy UI anywhere.
+- Ready For Review: YES.
