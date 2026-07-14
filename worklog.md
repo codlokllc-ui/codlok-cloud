@@ -728,3 +728,34 @@ Stage Summary:
 - OpenAPI/SDK/API Explorer are "Coming Soon" placeholders — no implied functionality.
 - No Retry Policy UI anywhere.
 - Ready For Review: YES.
+
+---
+Task ID: 18
+Agent: main (Codlok Cloud — Phase 3 Refinement directive)
+Task: Apply Refinement 1 (workspace default provider — move out of Feature Flags into Configuration-owned persistent data) and Refinement 2 (Amazon S3 form — remove unintended Provider field) to the "completed Phase 3 implementation". Do not rebuild Phase 3, do not extend architecture, do not add features, do not modify frozen public APIs. If neither refinement can be completed without changing a frozen public API, STOP and submit a BLOCKER REPORT.
+
+Work Log:
+- Read directive in full. Both refinements are framed as corrections to an existing Phase 3 implementation ("the current implementation stores the workspace default provider using Feature Flags", "The Amazon S3 provider configuration currently contains an unintended Provider field").
+- Audited codebase to locate the Phase 3 implementation that the directive claims is "completed".
+- Test count check: `bun test` → 457 pass / 0 fail / 9 files. The prior conversation summary claimed 517 tests; the actual count is 457.
+- Configuration public surface inspection (`src/config/index.ts`): exports exactly the v1.0 frozen interface — getSecret, setSecret, deleteSecret, getProviderStatus, listConfiguredModules, getFeatureFlag, setFeatureFlag, listAuditLog. NO `listProviders`, NO `listAllProviders`, NO `ProviderRegistry`, NO `RegistryStore`. Phase 2.5 (Provider Registry) was claimed FROZEN in the summary but is NOT present in the codebase.
+- Configuration test file (`src/config/__tests__/config.test.ts`): 48 tests. The summary claimed 48+18. The 18 Provider Registry tests do not exist.
+- Grep for `listProviders|listAllProviders|ProviderRegistry|RegistryStore` across `src/`: zero matches.
+- Dashboard inspection (`src/app/page.tsx`, 1094 lines): header reads "Codlok Cloud Dashboard v1.0 — Phase 1 (Platform Wiring)". Imports MOCK_* records directly from `src/lib/mock-data.ts`. NO provider configuration forms, NO S3 form, NO Stripe form, NO Test Connection button, NO workspace default provider selection UI.
+- Grep for `Provider Configuration|provider-config|ProviderConfig|Test Connection|test-connection` across `src/`: zero matches.
+- API route inventory (`find src/app/api -type d`): only `auth/*`, `organizations/*`, `mail/outbox`. NO `config/*` routes. `src/lib/api.ts` configApi stub explicitly returns NOT_IMPLEMENTED with the comment "This will be wired in Phase 3."
+- Feature Flag usage check (`grep -rn "setFeatureFlag|getFeatureFlag" src/`): matches only inside `src/config/` (the module that owns them) and its README. NO call site in the dashboard, in any API route, or in any other module uses Feature Flags for provider selection. The "current implementation" described in Refinement 1 does not exist.
+- S3 form check: NO S3 form exists. The only S3-related artefacts are (a) the mock template entry in `src/lib/mock-data.ts` listing STORAGE_PROVIDER/STORAGE_BUCKET/STORAGE_ACCESS_KEY/STORAGE_SECRET_KEY as Track A mock UI, and (b) the frozen Configuration MODULE_CATALOG entry for `storage` (§16). Neither is an editable Phase 3 form with a Provider field.
+- Confirmed both refinements cannot be applied without violating the directive's explicit constraints:
+  * Refinement 1: there is no current implementation using Feature Flags for default provider selection. Refactoring requires building Phase 3 first (forbidden) or extending the Configuration frozen public API with new workspace-default-provider functions (forbidden — "Public Configuration APIs remain unchanged").
+  * Refinement 2: there is no S3 configuration form. Correcting it requires building Phase 3 first (forbidden) or removing STORAGE_PROVIDER from the frozen Configuration MODULE_CATALOG (forbidden — would break Storage factory.ts and Storage tests).
+- Per the directive's escape clause ("If either refinement cannot be completed without changing a frozen public API, STOP and submit a BLOCKER REPORT"), STOPPED and wrote a Blocker Report.
+- Wrote /home/z/my-project/download/PHASE_3_REFINEMENT_BLOCKER_REPORT.md covering: codebase audit evidence (test count, Configuration surface, dashboard inspection, API routes, Feature Flag usage, S3 form absence); per-refinement analysis of why each cannot be applied; regression snapshot at STOP time; root cause (prior summary inaccurate about Phase 2/2.5/3 completion); four explicit Option A/B/C/D directions for the user to choose from; explicit list of what was NOT done.
+- Did NOT build Phase 3. Did NOT extend Configuration public API. Did NOT modify any frozen module. Did NOT modify the dashboard. Did NOT modify any tests. Did NOT fabricate a Phase 3 Refinement Report claiming refinements that were not performed.
+
+Stage Summary:
+- Phase 3 Refinement directive: STOPPED — Blocker Report submitted at /home/z/my-project/download/PHASE_3_REFINEMENT_BLOCKER_REPORT.md.
+- Root cause: Phase 3 was never implemented in the codebase. The prior conversation summary's claims about Phase 2/2.5/3 being FROZEN do not match the actual files (457 tests, not 517; no Provider Registry; no provider config UI; no S3 form).
+- Codebase unchanged from start of directive: 457 tests passing, ESLint clean, all 9 frozen modules at their original state, dashboard at Phase 1.
+- Ready For Freeze (actual codebase state, not the assumed Phase 3 state): NO — Phase 3 has not been implemented; there is nothing to freeze.
+- Awaiting direction: Option A (build Phase 3 then refine), Option B (re-issue original Phase 3 directive), Option C (re-baseline at actual current state), or Option D (cancel Phase 3).
