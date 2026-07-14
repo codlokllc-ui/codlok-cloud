@@ -759,3 +759,41 @@ Stage Summary:
 - Codebase unchanged from start of directive: 457 tests passing, ESLint clean, all 9 frozen modules at their original state, dashboard at Phase 1.
 - Ready For Freeze (actual codebase state, not the assumed Phase 3 state): NO — Phase 3 has not been implemented; there is nothing to freeze.
 - Awaiting direction: Option A (build Phase 3 then refine), Option B (re-issue original Phase 3 directive), Option C (re-baseline at actual current state), or Option D (cancel Phase 3).
+
+---
+Task ID: 19
+Agent: main (Codlok Cloud — Baseline Verification Directive)
+Task: Verify actual repository state. Ignore previous conversation summaries unless they exist in the repository. Produce a BASELINE VERIFICATION REPORT containing: current spec version, current project phase, Configuration API surface, dashboard status, Provider Registry status, test count, API routes, frozen modules. Compare against previously reported milestones and identify Present/Partially present/Missing. Do not implement, do not modify code. Recommend correct next phase based solely on repository contents.
+
+Work Log:
+- Read directive in full. Performed direct repository audit only — no reliance on the prior conversation summary's claims.
+- Spec version check: latest spec file in upload/ is "codlok-cloud-master-spec 3.9.md" (Spec Version: 3.9 per line 3 header). No v4.x spec file exists anywhere in the repo.
+- Test count: `bun test` → 457 pass / 0 fail / 9 files / 1546 expect() calls.
+- Per-module test breakdown (counted test() in each test file): auth=36, organizations=69, config=48, mail=48, storage=53, pay=62, verify=52, notifications=41, sms=48. Sum=457. Exactly matches spec v3.9 Platform Freeze Log.
+- Configuration public surface: read src/config/index.ts (482 lines) in full. Exports exactly 8 public functions per §16 v1.0 frozen: getSecret, setSecret, deleteSecret, getProviderStatus, listConfiguredModules, getFeatureFlag, setFeatureFlag, listAuditLog. NO listProviders, NO listAllProviders.
+- Grep for "listProviders|listAllProviders|ProviderRegistry|RegistryStore|FrozenArrayRegistryStore" across src/: zero matches. Provider Registry (Phase 2.5) does not exist.
+- Dashboard inspection: src/app/page.tsx (1094 lines), header reads "Codlok Cloud Dashboard v1.0 — Phase 1 (Platform Wiring)". Imports MOCK_* data from src/lib/mock-data.ts. Real API calls limited to useAuth() context and orgsApi.
+- src/lib/api.ts configApi stub explicitly returns NOT_IMPLEMENTED with comment "This will be wired in Phase 3."
+- Feature Flag usage check: grep "setFeatureFlag|getFeatureFlag" src/ → matches only in src/config/ (the module that owns them) and README. No call site uses Feature Flags for "workspace default provider selection" — the Phase 3 Refinement directive's premise describes code that does not exist.
+- S3 form check: no S3 configuration form exists. Only S3 artefacts are (a) mock template entry in src/lib/mock-data.ts (Track A mock UI, read-only), (b) Configuration MODULE_CATALOG entry for storage with STORAGE_PROVIDER as a required key (frozen §16 data).
+- API route inventory: 28 route files total. Auth=10, Organizations=17, Mail outbox stub=1, root placeholder=1. NO /api/config/, /api/storage/, /api/pay/, /api/verify/, /api/notifications/, /api/sms/ routes exist.
+- Missing list functions check: grep "^export (async )?function (listFiles|listMessages|listPayments)" → zero matches. The prior summary's claim that Storage.listFiles, Pay.listPayments, Mail.listMessages were added in Phase 2 per §3.13 is not reflected in code. Only listRefunds, listVerifications, listNotifications, listSms, listWorkspaces/Members/Roles/Permissions/Invitations exist.
+- Missing test files check: find src/app -name "__tests__" → no results. find src/modules -name "__tests__" (top-level) → no results. src/config/__tests__/ contains only config.test.ts. The 4 test files claimed by prior summary (phase1-acceptance.test.ts=11, phase2-integration.test.ts=12, additive-list.test.ts=19, provider-registry.test.ts=18 — 60 tests total) do not exist. 457 + 60 = 517, which matches the prior summary's "517 tests" claim — confirming the gap.
+- Lint: `bun run lint` exits 0 clean.
+- TypeScript: `npx tsc --noEmit` → 22 errors total. Of these: 9 are "Cannot find module 'bun:test'" in test files (pre-existing tooling artifact, harmless — bun test resolves it at runtime); 9 are "Property 'data'/'error' does not exist on type 'StandardResponse'" in test files (type-narrowing issue in test assertions, pre-existing, non-blocking); 4 are in examples/ and skills/ (not Codlok source). Net: zero TypeScript errors in Codlok Cloud application source.
+- Mock data check: src/lib/mock-data.ts (390 lines) still exports all original mocks: MOCK_PRODUCTS, getMockModules, MOCK_TEAM, MOCK_VERIFY_RECORDS, MOCK_STORAGE_RECORDS, MOCK_PAY_RECORDS, MOCK_NOTIFICATION_RECORDS, MOCK_SMS_RECORDS, MOCK_SECRET_TEMPLATES, MOCK_FREEZE_LOG. The prior summary's claim that "only MOCK_FREEZE_LOG remains" is not accurate.
+- .env check: current contents are only "DATABASE_URL=file:/home/z/my-project/db/custom.db". The CODELOK_AUTH_USE_MOCK=true flag was removed in the most recent git diff (visible via `git diff HEAD -- .env`). Code paths still read this flag; tests set/unset it per-test so the suite passes; manual dev-server login will return 401 without re-adding it to .env.
+- Compared actual state against prior summary's claimed milestones. Categorized as Present / Partially Present / Missing:
+  * Present: 9 frozen modules with correct test counts; Dashboard Track A mock UI; Auth + Organizations API wiring; 5 Blocker Reports; AUTH_BUILD_REPORT; spec v3.9 with §3.8-§3.13 and §16-§23.
+  * Partially Present: Dashboard Phase 1 (Auth/Orgs wired, 7 modules still on mock); spec v3.x evolution (v1.2 through v3.9 present, no v4.x); Mail outbox demo API (stub only); CODELOK_AUTH_USE_MOCK support (code reads it but .env doesn't set it).
+  * Missing: Spec v4.4; 517-test count; phase1-acceptance.test.ts, phase2-integration.test.ts, additive-list.test.ts, provider-registry.test.ts; Phase 2 (14 new API routes, ModuleListCard, integration tests); Phase 2.5 (Provider Registry, 3-layer architecture, 6 registered providers, 18 tests); Phase 3 (provider config UI); Storage.listFiles, Pay.listPayments, Mail.listMessages; HttpOnly cookie session migration; "only MOCK_FREEZE_LOG remains".
+- Wrote /home/z/my-project/download/BASELINE_VERIFICATION_REPORT.md (12 sections): TL;DR; spec version; project phase; Configuration public surface; dashboard status; Provider Registry status; test count; API routes; frozen modules; milestone comparison (Present/Partial/Missing); recommended next phase (Dashboard Phase 2 — wire 7 remaining modules one at a time, per spec §24 step 3); final state summary; what was NOT done.
+- Did NOT implement anything. Did NOT modify code. Did NOT run any state-changing operation. Only read-only commands used.
+
+Stage Summary:
+- Baseline Verification Report submitted at /home/z/my-project/download/BASELINE_VERIFICATION_REPORT.md.
+- Actual repository state: Spec v3.9, Dashboard Phase 1 (Auth + Organizations wired; 7 modules on mock data), 457 tests passing, 9 frozen modules, Configuration v1.0 frozen (no Provider Registry), 28 API route files (Auth+Organizations+Mail-outbox-stub only).
+- Prior conversation summary's Phase 2/2.5/3 claims are NOT reflected in the codebase. The 60-test gap (517 claimed - 457 actual = 60) corresponds exactly to the 4 missing test files (11+12+19+18=60).
+- Recommended next phase: Dashboard Phase 2 — wire remaining 7 modules' dashboard pages to real backend APIs, one module at a time, per spec §24 step 3. Suggested order: Configuration → Mail → Storage → Pay → Verify → Notifications → SMS.
+- Phase 3 (Provider Configuration), Provider Registry (Phase 2.5), Storage.listFiles/Pay.listPayments/Mail.listMessages additions, Jobs/Queue, Search, Audit, AI are all explicitly NOT recommended next — no spec basis or explicitly deferred per §24.
+- Ready For Review: YES.
