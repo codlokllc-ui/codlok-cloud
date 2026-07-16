@@ -18,5 +18,5 @@ startProdServer({
 });
 `;
 
-writeFileSync('dist/server/index.js', entry);
+writeFileSync('dist/sites-runtime-entry.mjs', entry);
 writeFileSync('dist/package.json', JSON.stringify({ type: 'module' }));
