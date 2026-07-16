@@ -132,6 +132,11 @@ export const store = {
       Object.assign(record, extra);
     }
   },
+  listPaymentsByWorkspace(workspaceId: string): PaymentRecord[] {
+    const ids = _getStore().paymentsByWorkspace.get(workspaceId);
+    if (!ids) return [];
+    return [...ids].map((id) => _getStore().payments.get(id)).filter((r): r is PaymentRecord => !!r);
+  },
   addRefundedAmount(paymentId: string, amountMinorUnits: number): void {
     const record = _getStore().payments.get(paymentId);
     if (!record) return;

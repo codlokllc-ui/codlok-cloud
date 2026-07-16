@@ -173,25 +173,25 @@ describe('Phase 3 — Provider Status', () => {
 });
 
 // ===========================================================================
-// Workspace Default Provider — stored in Configuration (feature flags)
+// Workspace Default Provider — stored in Configuration settings
 // ===========================================================================
 
 describe('Phase 3 — Workspace Default Provider', () => {
-  test('setFeatureFlag stores workspace default provider selection', async () => {
+  test('setSetting stores workspace default provider selection', async () => {
     const user = await registerAndLogin('p3dp1@codlok.cloud');
     const ws = await createWorkspace(user.accessToken, 'Test');
 
-    const setR = await Configuration.setFeatureFlag(ws.id, 'default_provider:pay', 'stripe', user.userId);
+    const setR = await Configuration.setSetting(ws.id, 'default_provider:pay', 'stripe', user.userId);
     expect(setR.success).toBe(true);
     expect(setR.data.value).toBe('stripe');
   });
 
-  test('getFeatureFlag retrieves workspace default provider', async () => {
+  test('getSetting retrieves workspace default provider', async () => {
     const user = await registerAndLogin('p3dp2@codlok.cloud');
     const ws = await createWorkspace(user.accessToken, 'Test');
 
-    await Configuration.setFeatureFlag(ws.id, 'default_provider:mail', 'resend', user.userId);
-    const getR = await Configuration.getFeatureFlag(ws.id, 'default_provider:mail');
+    await Configuration.setSetting(ws.id, 'default_provider:mail', 'resend', user.userId);
+    const getR = await Configuration.getSetting(ws.id, 'default_provider:mail');
     expect(getR.success).toBe(true);
     expect(getR.data.value).toBe('resend');
   });
@@ -199,13 +199,13 @@ describe('Phase 3 — Workspace Default Provider', () => {
   test('Default provider is workspace-scoped', async () => {
     const userA = await registerAndLogin('p3dp3A@codlok.cloud');
     const wsA = await createWorkspace(userA.accessToken, 'A');
-    await Configuration.setFeatureFlag(wsA.id, 'default_provider:pay', 'stripe', userA.userId);
+    await Configuration.setSetting(wsA.id, 'default_provider:pay', 'stripe', userA.userId);
 
     const userB = await registerAndLogin('p3dp3B@codlok.cloud');
     const wsB = await createWorkspace(userB.accessToken, 'B');
 
-    const getA = await Configuration.getFeatureFlag(wsA.id, 'default_provider:pay');
-    const getB = await Configuration.getFeatureFlag(wsB.id, 'default_provider:pay');
+    const getA = await Configuration.getSetting(wsA.id, 'default_provider:pay');
+    const getB = await Configuration.getSetting(wsB.id, 'default_provider:pay');
     expect(getA.data?.value).toBe('stripe');
     expect(getB.success).toBe(false); // FEATURE_FLAG_NOT_FOUND — not set in wsB
   });
@@ -213,7 +213,7 @@ describe('Phase 3 — Workspace Default Provider', () => {
   test('Provider Registry defaultProvider field is never modified', async () => {
     // The registry's defaultProvider field is metadata — it indicates which
     // provider is the platform default, NOT the workspace default.
-    // Workspace defaults are stored in feature flags, never in the registry.
+    // Workspace defaults are stored in Configuration settings, never in the registry.
     const listR = await Configuration.listProviders('pay');
     expect(listR.success).toBe(true);
     if (!listR.success) return;
@@ -223,7 +223,7 @@ describe('Phase 3 — Workspace Default Provider', () => {
     // Now set a workspace default — registry should be unaffected.
     const user = await registerAndLogin('p3dp4@codlok.cloud');
     const ws = await createWorkspace(user.accessToken, 'Test');
-    await Configuration.setFeatureFlag(ws.id, 'default_provider:pay', 'stripe', user.userId);
+    await Configuration.setSetting(ws.id, 'default_provider:pay', 'stripe', user.userId);
 
     // Re-check registry — defaultProvider still true (unchanged).
     const listR2 = await Configuration.listProviders('pay');

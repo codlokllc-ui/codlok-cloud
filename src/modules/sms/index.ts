@@ -132,6 +132,8 @@ export interface ListSmsData {
     status: SmsStatus;
     createdAt: string;
   }[];
+  hasMore: boolean;
+  nextCursor: string | null;
 }
 
 export interface GetProviderStatusData {
@@ -396,24 +398,22 @@ export async function getSms(
 
 export async function listSms(
   workspaceId: string,
-  filters?: { status?: SmsStatus; dateFrom?: string; dateTo?: string }
+  filters?: { status?: SmsStatus; dateFrom?: string; dateTo?: string },
+  pagination?: { limit?: number; cursor?: string }
 ): Promise<StandardResponse<ListSmsData>> {
   try {
     _requireWorkspaceId(workspaceId);
-
-    // NO recipient/phone-number filter — SMS doesn't retain recipients as
-    // queryable system-of-record data (§22 line 1173).
-    const records = store.listByWorkspace(workspaceId, filters);
+    const records = store.listByWorkspace(workspaceId, filters).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const start = pagination?.cursor ? Math.max(0, records.findIndex((r) => r.smsId === pagination.cursor) + 1) : 0;
+    const limit = pagination?.limit && pagination.limit > 0 ? pagination.limit : records.length || 1;
+    const page = records.slice(start, start + limit);
+    const hasMore = start + page.length < records.length;
     return ok<ListSmsData>({
-      items: records.map((r) => ({
-        smsId: r.smsId,
-        status: r.status,
-        createdAt: r.createdAt,
-      })),
+      items: page.map((r) => ({ smsId: r.smsId, status: r.status, createdAt: r.createdAt })),
+      hasMore,
+      nextCursor: hasMore && page.length ? page[page.length - 1].smsId : null,
     });
-  } catch (err) {
-    return _smsErrorToResponse(err);
-  }
+  } catch (err) { return _smsErrorToResponse(err); }
 }
 
 // ---------------------------------------------------------------------------

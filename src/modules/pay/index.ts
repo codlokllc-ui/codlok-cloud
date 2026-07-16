@@ -653,6 +653,40 @@ function _isValidTransition(from: PaymentStatus, to: PaymentStatus): boolean {
   return validTransitions[from]?.includes(to) ?? false;
 }
 
+
+// ---------------------------------------------------------------------------
+// v1.1 listPayments (additive dashboard read API)
+// ---------------------------------------------------------------------------
+
+export interface ListPaymentsData {
+  items: { paymentId: string; amountMinorUnits: number; currency: string; provider: string; status: PaymentStatus; createdAt: string; updatedAt: string }[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export async function listPayments(
+  workspaceId: string,
+  filters?: { status?: PaymentStatus; currency?: string },
+  pagination?: { limit?: number; cursor?: string }
+): Promise<StandardResponse<ListPaymentsData>> {
+  try {
+    _requireWorkspaceId(workspaceId);
+    let records = store.listPaymentsByWorkspace(workspaceId);
+    if (filters?.status) records = records.filter((r) => r.status === filters.status);
+    if (filters?.currency) records = records.filter((r) => r.currency === filters.currency);
+    records = records.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const start = pagination?.cursor ? Math.max(0, records.findIndex((r) => r.paymentId === pagination.cursor) + 1) : 0;
+    const limit = pagination?.limit && pagination.limit > 0 ? pagination.limit : records.length || 1;
+    const page = records.slice(start, start + limit);
+    const hasMore = start + page.length < records.length;
+    return ok({
+      items: page.map((r) => ({ paymentId: r.paymentId, amountMinorUnits: r.amountMinorUnits, currency: r.currency, provider: r.provider, status: r.status, createdAt: r.createdAt, updatedAt: r.updatedAt })),
+      hasMore,
+      nextCursor: hasMore && page.length ? page[page.length - 1].paymentId : null,
+    });
+  } catch (err) { return _payErrorToResponse(err); }
+}
+
 // ---------------------------------------------------------------------------
 // Public surface (the ONLY thing other modules may import)
 // ---------------------------------------------------------------------------
@@ -662,6 +696,7 @@ export const Pay = {
   getPayment,
   refundPayment,
   listRefunds,
+  listPayments,
   getProviderStatus,
   processWebhook, // exported for the webhook route handler
 };

@@ -19,6 +19,7 @@
 import type {
   SecretRecord,
   FeatureFlagRecord,
+  SettingRecord,
   AuditLogEntry,
 } from './types';
 
@@ -29,6 +30,8 @@ import type {
 interface ConfigStore {
   /** workspaceId → key → SecretRecord (encrypted) */
   secrets: Map<string, Map<string, SecretRecord>>;
+  /** workspaceId → key → non-secret SettingRecord */
+  settings: Map<string, Map<string, SettingRecord>>;
   /** workspaceId → key → FeatureFlagRecord */
   featureFlags: Map<string, Map<string, FeatureFlagRecord>>;
   /** Audit log (append-only, capped). */
@@ -52,6 +55,7 @@ function _getStore(): ConfigStore {
 function _createFreshStore(): ConfigStore {
   return {
     secrets: new Map(),
+    settings: new Map(),
     featureFlags: new Map(),
     auditLog: [],
   };
@@ -104,8 +108,29 @@ export const store = {
   workspaceExists(workspaceId: string): boolean {
     return (
       _getStore().secrets.has(workspaceId) ||
+      _getStore().settings.has(workspaceId) ||
       _getStore().featureFlags.has(workspaceId)
     );
+  },
+
+  // ── Non-secret workspace settings ──────────────────────────────────
+  getSetting(workspaceId: string, key: string): SettingRecord | undefined {
+    return _getStore().settings.get(workspaceId)?.get(key);
+  },
+  setSetting(workspaceId: string, key: string, record: SettingRecord): void {
+    let wsMap = _getStore().settings.get(workspaceId);
+    if (!wsMap) {
+      wsMap = new Map();
+      _getStore().settings.set(workspaceId, wsMap);
+    }
+    wsMap.set(key, record);
+  },
+  deleteSetting(workspaceId: string, key: string): SettingRecord | undefined {
+    const wsMap = _getStore().settings.get(workspaceId);
+    if (!wsMap) return undefined;
+    const existing = wsMap.get(key);
+    wsMap.delete(key);
+    return existing;
   },
 
   // ── Feature flags ───────────────────────────────────────────────────
@@ -139,6 +164,10 @@ export const store = {
   // ── Versioning helper ───────────────────────────────────────────────
   nextVersion(workspaceId: string, key: string): number {
     const existing = store.getSecret(workspaceId, key);
+    return existing ? existing.version + 1 : 1;
+  },
+  nextSettingVersion(workspaceId: string, key: string): number {
+    const existing = store.getSetting(workspaceId, key);
     return existing ? existing.version + 1 : 1;
   },
   nextFlagVersion(workspaceId: string, key: string): number {

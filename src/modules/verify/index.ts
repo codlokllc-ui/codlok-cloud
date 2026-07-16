@@ -133,6 +133,8 @@ export interface ListVerificationsData {
     verificationType: VerificationType;
     createdAt: string;
   }[];
+  hasMore: boolean;
+  nextCursor: string | null;
 }
 
 export interface GetProviderStatusData {
@@ -319,23 +321,22 @@ export async function getVerificationStatus(
 
 export async function listVerifications(
   workspaceId: string,
-  filters?: { status?: VerificationStatus; verificationType?: VerificationType }
+  filters?: { status?: VerificationStatus; verificationType?: VerificationType },
+  pagination?: { limit?: number; cursor?: string }
 ): Promise<StandardResponse<ListVerificationsData>> {
   try {
     _requireWorkspaceId(workspaceId);
-
-    const records = store.listByWorkspace(workspaceId, filters);
+    const records = store.listByWorkspace(workspaceId, filters).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const start = pagination?.cursor ? Math.max(0, records.findIndex((r) => r.verificationId === pagination.cursor) + 1) : 0;
+    const limit = pagination?.limit && pagination.limit > 0 ? pagination.limit : records.length || 1;
+    const page = records.slice(start, start + limit);
+    const hasMore = start + page.length < records.length;
     return ok<ListVerificationsData>({
-      verifications: records.map((r) => ({
-        verificationId: r.verificationId,
-        status: r.status,
-        verificationType: r.verificationType,
-        createdAt: r.createdAt,
-      })),
+      verifications: page.map((r) => ({ verificationId: r.verificationId, status: r.status, verificationType: r.verificationType, createdAt: r.createdAt })),
+      hasMore,
+      nextCursor: hasMore && page.length ? page[page.length - 1].verificationId : null,
     });
-  } catch (err) {
-    return _verifyErrorToResponse(err);
-  }
+  } catch (err) { return _verifyErrorToResponse(err); }
 }
 
 // ---------------------------------------------------------------------------

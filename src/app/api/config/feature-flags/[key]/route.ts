@@ -1,43 +1,30 @@
 /**
- * GET  /api/config/feature-flags/[key]?workspaceId=ws1
- *   → Configuration.getFeatureFlag(workspaceId, key)
- * POST /api/config/feature-flags/[key]
- *   Body: { workspaceId, value }
- *   → Configuration.setFeatureFlag(workspaceId, key, value, actorUserId)
- *
- * Used for workspace default provider selection:
- *   key: "default_provider:pay" → value: "stripe"
- *   key: "default_provider:mail" → value: "resend"
+ * Workspace feature flags. Feature flags are runtime behavior toggles only;
+ * provider selection is stored through Configuration settings instead.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { Configuration } from '@/config';
-import { getAccessToken, sendResponse } from '../../../organizations/_helpers';
+import { sendResponse } from '../../../organizations/_helpers';
+import { authorizeWorkspaceRequest } from '../../../_workspace-auth';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ key: string }> }) {
   const { key } = await params;
   const url = new URL(req.url);
   const workspaceId = url.searchParams.get('workspaceId') ?? '';
-  const r = await Configuration.getFeatureFlag(workspaceId, key);
-  return sendResponse(r);
+  const auth = await authorizeWorkspaceRequest(req, workspaceId);
+  if (!auth.ok) return auth.response;
+  return sendResponse(await Configuration.getFeatureFlag(workspaceId, key));
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ key: string }> }) {
   const { key } = await params;
   let body: { workspaceId?: string; value?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { success: false, error: { code: 'INVALID_INPUT', message: 'Invalid JSON body.' } },
-      { status: 400 }
-    );
+  try { body = await req.json(); }
+  catch {
+    return NextResponse.json({ success: false, error: { code: 'INVALID_INPUT', message: 'Invalid JSON body.' } }, { status: 400 });
   }
-  const accessToken = getAccessToken(req);
-  const r = await Configuration.setFeatureFlag(
-    body.workspaceId ?? '',
-    key,
-    body.value ?? '',
-    accessToken || 'dashboard'
-  );
-  return sendResponse(r);
+  const workspaceId = body.workspaceId ?? '';
+  const auth = await authorizeWorkspaceRequest(req, workspaceId, { ownerOnly: true });
+  if (!auth.ok) return auth.response;
+  return sendResponse(await Configuration.setFeatureFlag(workspaceId, key, body.value ?? '', auth.userId));
 }

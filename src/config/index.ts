@@ -72,6 +72,7 @@ import {
 import type {
   SecretRecord,
   FeatureFlagRecord,
+  SettingRecord,
   AuditLogEntry,
 } from './internal/types';
 import { store, _resetStoreForTesting } from './internal/store';
@@ -109,6 +110,14 @@ export interface ProviderStatusData {
 
 export interface ListConfiguredModulesData {
   modules: { moduleId: string; configured: boolean }[];
+}
+
+export interface SettingData {
+  key: string;
+  value: string;
+  version: number;
+  updatedBy: string;
+  updatedAt: string;
 }
 
 export interface FeatureFlagData {
@@ -366,6 +375,55 @@ export async function listConfiguredModules(
 }
 
 // ---------------------------------------------------------------------------
+// Additive workspace settings (non-secret persistent configuration)
+// ---------------------------------------------------------------------------
+
+export async function getSetting(
+  workspaceId: string,
+  key: string
+): Promise<StandardResponse<SettingData>> {
+  try {
+    _requireWorkspaceId(workspaceId);
+    _requireKey(key);
+    const record = store.getSetting(workspaceId, key);
+    if (!record) throw new ConfigError(ConfigErrorCode.SETTING_NOT_FOUND, `Setting '${key}' is not configured for this workspace.`);
+    return ok({ key, value: record.value, version: record.version, updatedBy: record.updatedBy, updatedAt: record.updatedAt });
+  } catch (err) { return _configErrorToResponse(err); }
+}
+
+export async function setSetting(
+  workspaceId: string,
+  key: string,
+  value: string,
+  actorUserId: string
+): Promise<StandardResponse<SettingData>> {
+  try {
+    _requireWorkspaceId(workspaceId);
+    _requireKey(key);
+    if (!actorUserId) throw new ConfigError(ConfigErrorCode.INVALID_KEY, 'actorUserId is required.');
+    if (typeof value !== 'string') throw new ConfigError(ConfigErrorCode.INVALID_KEY, 'value must be a string.');
+    const version = store.nextSettingVersion(workspaceId, key);
+    const record: SettingRecord = { key, value, version, updatedBy: actorUserId, updatedAt: _now() };
+    store.setSetting(workspaceId, key, record);
+    return ok({ key, value, version, updatedBy: actorUserId, updatedAt: record.updatedAt });
+  } catch (err) { return _configErrorToResponse(err); }
+}
+
+export async function deleteSetting(
+  workspaceId: string,
+  key: string,
+  _actorUserId: string
+): Promise<StandardResponse<{ key: string; configured: false }>> {
+  try {
+    _requireWorkspaceId(workspaceId);
+    _requireKey(key);
+    const existing = store.deleteSetting(workspaceId, key);
+    if (!existing) throw new ConfigError(ConfigErrorCode.SETTING_NOT_FOUND, `Setting '${key}' is not configured for this workspace.`);
+    return ok({ key, configured: false as const });
+  } catch (err) { return _configErrorToResponse(err); }
+}
+
+// ---------------------------------------------------------------------------
 // §16 getFeatureFlag / setFeatureFlag
 // ---------------------------------------------------------------------------
 
@@ -445,6 +503,85 @@ export async function listAuditLog(
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Provider Registry (metadata only; registration-driven)
+// ---------------------------------------------------------------------------
+
+export type ProviderRouting = 'DIRECT';
+
+export interface ProviderMetadata {
+  providerId: string;
+  moduleId: string;
+  displayName: string;
+  category: string;
+  defaultProvider: boolean;
+  supportsTestConnection: boolean;
+  supportsRotation: boolean;
+  supportsDisconnect: boolean;
+  routing: ProviderRouting;
+}
+
+interface RegistryStore {
+  register(metadata: ProviderMetadata): void;
+  getAll(): readonly ProviderMetadata[];
+  getByModule(moduleId: string): readonly ProviderMetadata[];
+  seal(): void;
+}
+
+class FrozenArrayRegistryStore implements RegistryStore {
+  private entries: ProviderMetadata[] = [];
+  private sealed = false;
+
+  register(metadata: ProviderMetadata): void {
+    if (this.sealed) throw new Error('Provider registry is sealed.');
+    this.entries.push(Object.freeze({ ...metadata }));
+  }
+
+  getAll(): readonly ProviderMetadata[] {
+    return Object.freeze([...this.entries]);
+  }
+
+  getByModule(moduleId: string): readonly ProviderMetadata[] {
+    return Object.freeze(this.entries.filter((entry) => entry.moduleId === moduleId));
+  }
+
+  seal(): void {
+    this.sealed = true;
+    Object.freeze(this.entries);
+  }
+}
+
+const _providerStore: RegistryStore = new FrozenArrayRegistryStore();
+
+function _registerBuiltInProviders(): void {
+  const builtIns: ProviderMetadata[] = [
+    { providerId: 'stripe', moduleId: 'pay', displayName: 'Stripe', category: 'payments', defaultProvider: true, supportsTestConnection: true, supportsRotation: true, supportsDisconnect: true, routing: 'DIRECT' },
+    { providerId: 'resend', moduleId: 'mail', displayName: 'Resend', category: 'email', defaultProvider: true, supportsTestConnection: true, supportsRotation: true, supportsDisconnect: true, routing: 'DIRECT' },
+    { providerId: 'twilio', moduleId: 'sms', displayName: 'Twilio', category: 'sms', defaultProvider: true, supportsTestConnection: true, supportsRotation: true, supportsDisconnect: true, routing: 'DIRECT' },
+    { providerId: 's3', moduleId: 'storage', displayName: 'Amazon S3', category: 'storage', defaultProvider: true, supportsTestConnection: true, supportsRotation: true, supportsDisconnect: true, routing: 'DIRECT' },
+    { providerId: 'supabase', moduleId: 'auth', displayName: 'Supabase', category: 'auth', defaultProvider: true, supportsTestConnection: true, supportsRotation: true, supportsDisconnect: true, routing: 'DIRECT' },
+    { providerId: 'stripe_identity', moduleId: 'verify', displayName: 'Stripe Identity', category: 'identity', defaultProvider: true, supportsTestConnection: true, supportsRotation: true, supportsDisconnect: true, routing: 'DIRECT' },
+  ];
+  for (const provider of builtIns) _providerStore.register(provider);
+  _providerStore.seal();
+}
+
+_registerBuiltInProviders();
+
+const ProviderRegistry = {
+  listAll(): readonly ProviderMetadata[] { return _providerStore.getAll(); },
+  listByModule(moduleId: string): readonly ProviderMetadata[] { return _providerStore.getByModule(moduleId); },
+};
+
+export async function listProviders(moduleId: string): Promise<StandardResponse<{ providers: ProviderMetadata[] }>> {
+  return ok({ providers: ProviderRegistry.listByModule(moduleId) as ProviderMetadata[] });
+}
+
+export async function listAllProviders(): Promise<StandardResponse<{ providers: ProviderMetadata[] }>> {
+  return ok({ providers: ProviderRegistry.listAll() as ProviderMetadata[] });
+}
+
 // ---------------------------------------------------------------------------
 // Public surface
 // ---------------------------------------------------------------------------
@@ -455,9 +592,14 @@ export const Configuration = {
   deleteSecret,
   getProviderStatus,
   listConfiguredModules,
+  getSetting,
+  setSetting,
+  deleteSetting,
   getFeatureFlag,
   setFeatureFlag,
   listAuditLog,
+  listProviders,
+  listAllProviders,
 };
 
 export type ConfigurationModule = typeof Configuration;

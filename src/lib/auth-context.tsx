@@ -27,6 +27,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  autoVerifyEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   verifyEmail: (token: string) => Promise<{ success: boolean; error?: string }>;
 }
@@ -77,7 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const userRes = await fetch('/api/auth/get-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: data.data.userId, accessToken: data.data.accessToken }),
+      body: JSON.stringify({ accessToken: data.data.accessToken }),
     });
     const userData = await userRes.json();
     const authUser: AuthUser = {
@@ -102,34 +103,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!data.success) {
       return { success: false, error: data.error?.message ?? 'Registration failed' };
     }
-    // In mock/dev mode, auto-verify the email by fetching the verification
-    // token from the Mail outbox and calling verify-email. In production,
-    // the user would check their real email and click the verification link.
+    return { success: true };
+  }, []);
+
+  const autoVerifyEmail = useCallback(async (email: string) => {
+    const isDevMode =
+      process.env.NEXT_PUBLIC_CODELOK_AUTH_USE_MOCK === 'true' &&
+      process.env.NODE_ENV !== 'production';
+    if (!isDevMode) return { success: false, error: 'Developer auto-verification is unavailable.' };
+
     try {
       const outboxRes = await fetch('/api/mail/outbox');
       const outboxData = await outboxRes.json();
-      if (outboxData.success && outboxData.data?.entries) {
-        const verifyEntry = outboxData.data.entries.find(
-          (e: { type: string; to: string; url: string }) =>
-            e.type === 'verification' && e.to === email
-        );
-        if (verifyEntry) {
-          const url = new URL(verifyEntry.url);
-          const token = url.searchParams.get('token') ?? '';
-          if (token) {
-            await fetch('/api/auth/verify-email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token }),
-            });
-          }
-        }
-      }
+      const verifyEntry = outboxData.success
+        ? outboxData.data?.entries?.find(
+            (entry: { type: string; to: string; url: string }) =>
+              entry.type === 'verification' && entry.to === email
+          )
+        : undefined;
+      if (!verifyEntry) return { success: false, error: 'Verification message was not found.' };
+      const token = new URL(verifyEntry.url).searchParams.get('token') ?? '';
+      if (!token) return { success: false, error: 'Verification token was not found.' };
+      const verifyRes = await fetch('/api/auth/verify-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+      const verifyData = await verifyRes.json();
+      return verifyData.success ? { success: true } : { success: false, error: verifyData.error?.message ?? 'Verification failed' };
     } catch {
-      // Best-effort — if auto-verification fails, the user can still log in
-      // after manually verifying. Don't block registration on this.
+      return { success: false, error: 'Developer auto-verification failed.' };
     }
-    return { success: true };
   }, []);
 
   const logout = useCallback(async () => {
@@ -158,7 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, verifyEmail }}>
+    <AuthContext.Provider value={{ user, loading, login, register, autoVerifyEmail, logout, verifyEmail }}>
       {children}
     </AuthContext.Provider>
   );

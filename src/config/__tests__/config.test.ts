@@ -633,3 +633,55 @@ describe('REGRESSION — Auth/Organizations compatibility', () => {
     expect(result).toBeNull();
   });
 });
+
+// ===========================================================================
+// v1.2 — Workspace Settings (persistent configuration, not feature flags)
+// ===========================================================================
+
+describe('v1.2 — Workspace Settings', () => {
+  test('Configuration public surface exposes getSetting/setSetting/deleteSetting', () => {
+    expect(Object.keys(Configuration)).toContain('getSetting');
+    expect(Object.keys(Configuration)).toContain('setSetting');
+    expect(Object.keys(Configuration)).toContain('deleteSetting');
+  });
+
+  test('setSetting then getSetting returns persistent workspace configuration', async () => {
+    const setResult = await Configuration.setSetting(WS_1, 'default_provider:pay', 'stripe', ADMIN_USER);
+    expect(setResult.success).toBe(true);
+    expect(setResult.data?.version).toBe(1);
+    const getResult = await Configuration.getSetting(WS_1, 'default_provider:pay');
+    expect(getResult.success).toBe(true);
+    expect(getResult.data?.value).toBe('stripe');
+  });
+
+  test('settings are workspace-isolated', async () => {
+    await Configuration.setSetting(WS_1, 'default_provider:pay', 'stripe', ADMIN_USER);
+    const other = await Configuration.getSetting(WS_2, 'default_provider:pay');
+    expect(other.success).toBe(false);
+    expect(other.error?.code).toBe('SETTING_NOT_FOUND');
+  });
+
+  test('setting updates increment version and preserve attribution', async () => {
+    await Configuration.setSetting(WS_1, 'default_provider:pay', 'stripe', ADMIN_USER);
+    const updated = await Configuration.setSetting(WS_1, 'default_provider:pay', 'paystack', 'user_admin_002');
+    expect(updated.success).toBe(true);
+    expect(updated.data?.version).toBe(2);
+    expect(updated.data?.updatedBy).toBe('user_admin_002');
+  });
+
+  test('deleteSetting removes the workspace setting', async () => {
+    await Configuration.setSetting(WS_1, 'default_provider:mail', 'resend', ADMIN_USER);
+    const removed = await Configuration.deleteSetting(WS_1, 'default_provider:mail');
+    expect(removed.success).toBe(true);
+    const missing = await Configuration.getSetting(WS_1, 'default_provider:mail');
+    expect(missing.success).toBe(false);
+    expect(missing.error?.code).toBe('SETTING_NOT_FOUND');
+  });
+
+  test('provider selection setting does not mutate provider registry metadata', async () => {
+    const before = await Configuration.listProviders('pay');
+    await Configuration.setSetting(WS_1, 'default_provider:pay', 'stripe', ADMIN_USER);
+    const after = await Configuration.listProviders('pay');
+    expect(after.data?.providers).toEqual(before.data?.providers);
+  });
+});

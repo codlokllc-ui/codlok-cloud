@@ -102,6 +102,11 @@ export const store = {
       Object.assign(msg, extra);
     }
   },
+  listByWorkspace(workspaceId: string): MessageRecord[] {
+    const ids = _getStore().messagesByWorkspace.get(workspaceId);
+    if (!ids) return [];
+    return [...ids].map((id) => _getStore().messages.get(id)).filter((r): r is MessageRecord => !!r);
+  },
   incrementRetry(messageId: string): void {
     const msg = _getStore().messages.get(messageId);
     if (msg) msg.retryCount++;

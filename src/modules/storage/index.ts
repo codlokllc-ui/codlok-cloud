@@ -628,6 +628,40 @@ export async function getProviderStatus(
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// v1.1 listFiles (additive dashboard read API)
+// ---------------------------------------------------------------------------
+
+export interface ListFilesData {
+  items: { fileId: string; state: FileState; mimeType: string; sizeBytes: number; createdAt: string; updatedAt: string }[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export async function listFiles(
+  workspaceId: string,
+  filters?: { state?: FileState; mimeType?: string },
+  pagination?: { limit?: number; cursor?: string }
+): Promise<StandardResponse<ListFilesData>> {
+  try {
+    _requireWorkspaceId(workspaceId);
+    let records = store.listByWorkspace(workspaceId);
+    if (filters?.state) records = records.filter((r) => r.state === filters.state);
+    if (filters?.mimeType) records = records.filter((r) => r.mimeType === filters.mimeType);
+    records = records.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const start = pagination?.cursor ? Math.max(0, records.findIndex((r) => r.fileId === pagination.cursor) + 1) : 0;
+    const limit = pagination?.limit && pagination.limit > 0 ? pagination.limit : records.length || 1;
+    const page = records.slice(start, start + limit);
+    const hasMore = start + page.length < records.length;
+    return ok({
+      items: page.map((r) => ({ fileId: r.fileId, state: r.state, mimeType: r.mimeType, sizeBytes: r.actualSizeBytes ?? r.expectedSizeBytes, createdAt: r.createdAt, updatedAt: r.updatedAt })),
+      hasMore,
+      nextCursor: hasMore && page.length ? page[page.length - 1].fileId : null,
+    });
+  } catch (err) { return _storageErrorToResponse(err); }
+}
+
 // ---------------------------------------------------------------------------
 // Public surface (the ONLY thing other modules may import)
 // ---------------------------------------------------------------------------
@@ -640,6 +674,7 @@ export const Storage = {
   deleteFile,
   fileExists,
   getProviderStatus,
+  listFiles,
 };
 
 export type StorageModule = typeof Storage;

@@ -146,29 +146,122 @@ export const orgsApi = {
 // Configuration API
 // ---------------------------------------------------------------------------
 
-export const configApi = {
-  async getProviderStatus(workspaceId: string, moduleId: string) {
-    // Configuration's getProviderStatus is not exposed via an API route yet.
-    // For now, we check via the module-specific getProviderStatus routes.
-    // This will be wired in Phase 3.
-    return { success: false, error: { code: 'NOT_IMPLEMENTED', message: 'Provider status API not yet wired.' } };
+// ---------------------------------------------------------------------------
+// Dashboard Module Data API
+// ---------------------------------------------------------------------------
+
+export interface PaginatedData<T = Record<string, unknown>> {
+  items: T[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export interface ProviderMetadataDto {
+  providerId: string;
+  moduleId: string;
+  displayName: string;
+  category: string;
+  defaultProvider: boolean;
+  supportsTestConnection: boolean;
+  supportsRotation: boolean;
+  supportsDisconnect: boolean;
+  routing: 'DIRECT';
+}
+
+export interface ProviderStatusDto {
+  moduleId: string;
+  configured: boolean;
+  requiredKeys: string[];
+  missingKeys: string[];
+}
+
+function withQuery(path: string, query: Record<string, string | number | undefined>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  }
+  const suffix = params.toString();
+  return suffix ? `${path}?${suffix}` : path;
+}
+
+export const moduleDataApi = {
+  async list(accessToken: string, moduleId: string, workspaceId: string, cursor?: string, limit = 20) {
+    return apiCall<{ success: boolean; data?: Record<string, unknown>; error?: { code: string; message: string } }>(
+      withQuery(`/api/${moduleId}/list`, { workspaceId, cursor, limit }),
+      { headers: authHeader(accessToken) }
+    );
   },
 
-  async listConfiguredModules(workspaceId: string) {
-    return { success: false, error: { code: 'NOT_IMPLEMENTED', message: 'List configured modules API not yet wired.' } };
+  async get(accessToken: string, moduleId: string, workspaceId: string, id: string) {
+    return apiCall<{ success: boolean; data?: Record<string, unknown>; error?: { code: string; message: string } }>(
+      withQuery(`/api/${moduleId}/${encodeURIComponent(id)}`, { workspaceId }),
+      { headers: authHeader(accessToken) }
+    );
   },
 };
 
-// ---------------------------------------------------------------------------
-// Module Status API (checks if each module's provider is configured)
-// ---------------------------------------------------------------------------
+export const configStatusApi = {
+  async getStatus(accessToken: string, workspaceId: string, moduleId: string) {
+    return apiCall<{ success: boolean; data?: ProviderStatusDto; error?: { code: string; message: string } }>(
+      withQuery(`/api/config/provider-status/${encodeURIComponent(moduleId)}`, { workspaceId }),
+      { headers: authHeader(accessToken) }
+    );
+  },
+};
 
-export async function getModuleProviderStatus(workspaceId: string, moduleId: string): Promise<boolean> {
-  // For dev/mock mode, all modules with CODELOK_AUTH_USE_MOCK=true are "configured."
-  if (process.env.NEXT_PUBLIC_CODELOK_AUTH_USE_MOCK === 'true') {
-    return true;
-  }
-  // In production, we'd call the module's getProviderStatus API route.
-  // Phase 2/3 will wire these.
-  return false;
-}
+export const providerRegistryApi = {
+  async listAll(accessToken: string) {
+    return apiCall<{ success: boolean; data?: { providers: ProviderMetadataDto[] }; error?: { code: string; message: string } }>(
+      '/api/config/providers',
+      { headers: authHeader(accessToken) }
+    );
+  },
+  async listByModule(accessToken: string, moduleId: string) {
+    return apiCall<{ success: boolean; data?: { providers: ProviderMetadataDto[] }; error?: { code: string; message: string } }>(
+      `/api/config/providers/${encodeURIComponent(moduleId)}`,
+      { headers: authHeader(accessToken) }
+    );
+  },
+};
+
+export const secretsApi = {
+  async check(accessToken: string, workspaceId: string, key: string) {
+    return apiCall<{ success: boolean; data?: { configured: boolean }; error?: { code: string; message: string } }>(
+      withQuery('/api/config/secrets', { workspaceId, key }),
+      { headers: authHeader(accessToken) }
+    );
+  },
+  async set(accessToken: string, workspaceId: string, key: string, value: string) {
+    return apiCall<{ success: boolean; data?: { key: string; configured: true; version: number }; error?: { code: string; message: string } }>(
+      '/api/config/secrets',
+      { method: 'POST', headers: authHeader(accessToken), body: JSON.stringify({ workspaceId, key, value }) }
+    );
+  },
+  async delete(accessToken: string, workspaceId: string, key: string) {
+    return apiCall<{ success: boolean; data?: { key: string; configured: false }; error?: { code: string; message: string } }>(
+      withQuery(`/api/config/secrets/${encodeURIComponent(key)}`, { workspaceId }),
+      { method: 'DELETE', headers: authHeader(accessToken) }
+    );
+  },
+};
+
+export const settingsApi = {
+  async get(accessToken: string, workspaceId: string, key: string) {
+    return apiCall<{ success: boolean; data?: { key: string; value: string; version: number; updatedBy: string; updatedAt: string }; error?: { code: string; message: string } }>(
+      withQuery(`/api/config/settings/${encodeURIComponent(key)}`, { workspaceId }),
+      { headers: authHeader(accessToken) }
+    );
+  },
+  async set(accessToken: string, workspaceId: string, key: string, value: string) {
+    return apiCall<{ success: boolean; data?: { key: string; value: string; version: number; updatedBy: string; updatedAt: string }; error?: { code: string; message: string } }>(
+      `/api/config/settings/${encodeURIComponent(key)}`,
+      { method: 'POST', headers: authHeader(accessToken), body: JSON.stringify({ workspaceId, value }) }
+    );
+  },
+  async delete(accessToken: string, workspaceId: string, key: string) {
+    return apiCall<{ success: boolean; data?: { key: string; configured: false }; error?: { code: string; message: string } }>(
+      withQuery(`/api/config/settings/${encodeURIComponent(key)}`, { workspaceId }),
+      { method: 'DELETE', headers: authHeader(accessToken) }
+    );
+  },
+};

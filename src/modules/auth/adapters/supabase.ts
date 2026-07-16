@@ -16,76 +16,14 @@
  * AUTH_PROVIDER_NOT_CONFIGURED to callers.
  */
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { getConfigurationService } from '@/config';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseCredentials } from './credentials';
 import {
   AuthProviderAdapter,
   ProviderUser,
   ProviderSession,
   ProviderAuthError,
 } from './types';
-
-// ---------------------------------------------------------------------------
-// Supabase credential resolution (via Configuration Service per §3.4)
-// ---------------------------------------------------------------------------
-
-export interface SupabaseCredentials {
-  url: string;
-  anonKey: string;
-  serviceRoleKey: string;
-}
-
-/**
- * Resolve Supabase credentials from the Configuration Service (§16).
- *
- * Calls Configuration.getSecret(workspaceId, key) three times concurrently
- * via Promise.all. The three lookups are independent of each other.
- *
- * §16's getSecret returns StandardResponse<{ value }>. On success we
- * unwrap .data.value; on failure (SECRET_NOT_CONFIGURED,
- * WORKSPACE_NOT_FOUND, or any other error) we treat the credential as
- * missing — `undefined`. This preserves the Phase 1 stub's behavior:
- * `if (!url || !anonKey || !serviceRoleKey) return null;` → the Auth
- * module surfaces AUTH_PROVIDER_NOT_CONFIGURED per §3.7.
- *
- * Per the approved Option B directive: the error path does NOT surface
- * as an unhandled rejection or a different error path than before. The
- * only behavioral change is that getSecret is called three times
- * instead of getSecrets once — the end result (null when any credential
- * is missing) is identical.
- *
- * @param workspaceId  Optional workspace scope. If undefined, a sentinel
- *   '__global__' is used (Configuration §16 requires workspaceId; this
- *   sentinel preserves the Phase 1 behavior where Auth could resolve
- *   credentials without a workspace context). Per §16 line 597, there is
- *   no global/default secret — so '__global__' is just an empty scope
- *   that returns SECRET_NOT_CONFIGURED for all keys unless explicitly
- *   populated via setSecret.
- */
-export async function resolveSupabaseCredentials(
-  workspaceId?: string
-): Promise<SupabaseCredentials | null> {
-  const config = getConfigurationService();
-  // §16 requires workspaceId. Use a sentinel for the global/optional case.
-  const ws = workspaceId ?? '__global__';
-
-  const [urlR, anonR, serviceR] = await Promise.all([
-    config.getSecret(ws, 'SUPABASE_URL', 'auth'),
-    config.getSecret(ws, 'SUPABASE_ANON_KEY', 'auth'),
-    config.getSecret(ws, 'SUPABASE_SERVICE_ROLE_KEY', 'auth'),
-  ]);
-
-  // Unwrap StandardResponse: success → .data.value; failure → undefined.
-  // This catches SECRET_NOT_CONFIGURED, WORKSPACE_NOT_FOUND, and any
-  // other error, preserving the Phase 1 stub's "undefined when missing"
-  // behavior. No error is surfaced as an unhandled rejection.
-  const url = urlR.success ? urlR.data.value : undefined;
-  const anonKey = anonR.success ? anonR.data.value : undefined;
-  const serviceRoleKey = serviceR.success ? serviceR.data.value : undefined;
-
-  if (!url || !anonKey || !serviceRoleKey) return null;
-  return { url, anonKey, serviceRoleKey };
-}
 
 // ---------------------------------------------------------------------------
 // Error translation: Supabase → ProviderAuthError
@@ -154,6 +92,11 @@ export class SupabaseAuthAdapter implements AuthProviderAdapter {
   private adminClient: SupabaseClient;
 
   constructor(credentials: SupabaseCredentials) {
+    // Load the provider SDK only when the real adapter is constructed.
+    // Configuration/mock-mode tests can import this module without loading
+    // Supabase or its transitive packages.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createClient } = require('@supabase/supabase-js') as typeof import('@supabase/supabase-js');
     // Public anon-key client for sign-up / sign-in / OAuth flows.
     this.client = createClient(credentials.url, credentials.anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -346,3 +289,6 @@ export class SupabaseAuthAdapter implements AuthProviderAdapter {
     };
   }
 }
+
+export { resolveSupabaseCredentials } from './credentials';
+export type { SupabaseCredentials } from './credentials';

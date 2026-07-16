@@ -65,14 +65,15 @@ export async function resolveProvider(
 
   // 3. Production: read storage credentials from Configuration.
   const config = getConfigurationService();
-  const [providerR, bucketR, accessKeyR, secretKeyR] = await Promise.all([
+  const [providerR, regionR, bucketR, accessKeyR, secretKeyR] = await Promise.all([
     config.getSecret(workspaceId, 'STORAGE_PROVIDER', 'storage'),
+    config.getSecret(workspaceId, 'STORAGE_REGION', 'storage'),
     config.getSecret(workspaceId, 'STORAGE_BUCKET', 'storage'),
     config.getSecret(workspaceId, 'STORAGE_ACCESS_KEY', 'storage'),
     config.getSecret(workspaceId, 'STORAGE_SECRET_KEY', 'storage'),
   ]);
 
-  if (!providerR.success || !bucketR.success || !accessKeyR.success || !secretKeyR.success) {
+  if (!providerR.success || !regionR.success || !bucketR.success || !accessKeyR.success || !secretKeyR.success) {
     return null;
   }
 
@@ -83,7 +84,7 @@ export async function resolveProvider(
 
   if (providerName === 's3' || providerName === 'r2') {
     // R2 is S3-compatible, so the same adapter works.
-    const region = process.env.STORAGE_REGION ?? 'us-east-1';
+    const region = regionR.data.value;
     const endpoint = providerName === 'r2'
       ? `https://${process.env.STORAGE_ACCOUNT_ID}.r2.cloudflarestorage.com`
       : undefined;

@@ -2,10 +2,13 @@
 import { NextRequest } from 'next/server';
 import { Notifications } from '@/modules/notifications';
 import { sendResponse } from '../../organizations/_helpers';
+import { authorizeWorkspaceRequest } from '@/app/api/_workspace-auth';
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const workspaceId = url.searchParams.get('workspaceId') ?? '';
+  const auth = await authorizeWorkspaceRequest(req, workspaceId);
+  if (!auth.ok) return auth.response;
   const limit = url.searchParams.get('limit');
   const cursor = url.searchParams.get('cursor');
   const overallStatus = url.searchParams.get('overallStatus');

@@ -20,10 +20,7 @@
  */
 
 import { MockAuthAdapter } from './mock';
-import {
-  SupabaseAuthAdapter,
-  resolveSupabaseCredentials,
-} from './supabase';
+import { resolveSupabaseCredentials } from './credentials';
 import { AuthProviderAdapter } from './types';
 
 // Allow tests to inject a custom adapter (e.g. a spy). Production code never
@@ -42,10 +39,10 @@ export function _setAdapterForTesting(
 const _SUPABASE_KEY = Symbol.for('codlok.auth.cachedSupabase');
 const _MOCK_KEY = Symbol.for('codlok.auth.cachedMock');
 
-function _getCachedSupabase(): SupabaseAuthAdapter | null {
-  return (globalThis as Record<symbol, unknown>)[_SUPABASE_KEY] as SupabaseAuthAdapter | null ?? null;
+function _getCachedSupabase(): AuthProviderAdapter | null {
+  return (globalThis as Record<symbol, unknown>)[_SUPABASE_KEY] as AuthProviderAdapter | null ?? null;
 }
-function _setCachedSupabase(a: SupabaseAuthAdapter | null): void {
+function _setCachedSupabase(a: AuthProviderAdapter | null): void {
   (globalThis as Record<symbol, unknown>)[_SUPABASE_KEY] = a;
 }
 function _getCachedMock(): MockAuthAdapter | null {
@@ -82,6 +79,7 @@ export async function resolveAdapter(
   // re-resolve per workspace once Configuration Service is multi-tenant.
   let supabase = _getCachedSupabase();
   if (!supabase) {
+    const { SupabaseAuthAdapter } = await import('./supabase');
     supabase = new SupabaseAuthAdapter(creds);
     _setCachedSupabase(supabase);
   }

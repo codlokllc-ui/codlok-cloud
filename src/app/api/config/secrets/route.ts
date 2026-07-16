@@ -13,7 +13,8 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { Configuration } from '@/config';
-import { getAccessToken, sendResponse } from '../../organizations/_helpers';
+import { sendResponse } from '../../organizations/_helpers';
+import { authorizeWorkspaceRequest } from '@/app/api/_workspace-auth';
 
 export async function POST(req: NextRequest) {
   let body: { workspaceId?: string; key?: string; value?: string; actorUserId?: string };
@@ -25,14 +26,13 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  const accessToken = getAccessToken(req);
-  // The actorUserId comes from the caller's session, not the client body.
-  // For now, we pass the accessToken as actorUserId (Configuration accepts any string).
+  const auth = await authorizeWorkspaceRequest(req, body.workspaceId ?? '', { ownerOnly: true });
+  if (!auth.ok) return auth.response;
   const r = await Configuration.setSecret(
     body.workspaceId ?? '',
     body.key ?? '',
     body.value ?? '',
-    accessToken || body.actorUserId || 'dashboard'
+    auth.userId
   );
   return sendResponse(r);
 }
@@ -41,6 +41,8 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const workspaceId = url.searchParams.get('workspaceId') ?? '';
   const key = url.searchParams.get('key') ?? '';
+  const auth = await authorizeWorkspaceRequest(req, workspaceId, { ownerOnly: true });
+  if (!auth.ok) return auth.response;
   // Call getSecret to check if the secret is configured.
   // CRITICAL: We do NOT return the value to the client.
   // Only return whether it is configured.

@@ -34,6 +34,14 @@ export interface SecretRecord {
 // "workspace configuration data, not business logic or permissions")
 // ---------------------------------------------------------------------------
 
+export interface SettingRecord {
+  key: string;
+  value: string;
+  version: number;
+  updatedBy: string;
+  updatedAt: string;
+}
+
 export interface FeatureFlagRecord {
   key: string;
   value: string;
@@ -91,7 +99,7 @@ export const MODULE_CATALOG: ModuleRequirement[] = [
   },
   {
     moduleId: 'storage',
-    requiredKeys: ['STORAGE_PROVIDER', 'STORAGE_BUCKET', 'STORAGE_ACCESS_KEY', 'STORAGE_SECRET_KEY'],
+    requiredKeys: ['STORAGE_PROVIDER', 'STORAGE_REGION', 'STORAGE_BUCKET', 'STORAGE_ACCESS_KEY', 'STORAGE_SECRET_KEY'],
   },
   {
     moduleId: 'pay',

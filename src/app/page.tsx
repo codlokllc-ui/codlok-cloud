@@ -1,364 +1,287 @@
 'use client';
 
-/**
- * Codlok Cloud Dashboard v1.0 — Phase 1 (Platform Wiring)
- *
- * Auth + Organizations are now wired to real APIs.
- * Module detail pages still use mock data (Phase 2 will wire those).
- *
- * Binding Rules (§23):
- * - Every module detail page shows ONLY opaque infrastructure IDs, status,
- *   timestamps, provider name. Never business names/filenames/entity descriptions.
- * - "Team" (not "Organizations") for the in-product people page.
- * - Secret Templates: copy-not-inherit. "Apply Template" is mocked UI only.
- * - OpenAPI/SDK/API Explorer are "Coming Soon" placeholders.
- * - No Retry Policy UI anywhere.
- */
-
-import { useState, useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { orgsApi, type Workspace } from '@/lib/api';
+import {
+  configStatusApi,
+  moduleDataApi,
+  orgsApi,
+  providerRegistryApi,
+  secretsApi,
+  settingsApi,
+  type ProviderMetadataDto,
+  type ProviderStatusDto,
+  type TeamMember,
+  type Workspace,
+} from '@/lib/api';
+import { formatBytes, formatTimestamp, MOCK_FREEZE_LOG } from '@/lib/mock-data';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
 import {
-  LayoutDashboard, Package, KeyRound, Bot, FileText, Settings,
-  Activity, Users, ChevronRight, Plus, Lock, ArrowLeft,
-  Shield, Cpu, Mail, HardDrive, CreditCard, CheckCircle2,
-  Smartphone, Bell, AlertTriangle, Eye, FileBox, Clock,
-  BookOpen, Code2, FlaskConical, ScrollText
+  Activity,
+  ArrowLeft,
+  Bell,
+  BookOpen,
+  CheckCircle2,
+  ChevronRight,
+  Code2,
+  Cpu,
+  CreditCard,
+  FileText,
+  FlaskConical,
+  HardDrive,
+  KeyRound,
+  LayoutDashboard,
+  Lock,
+  Mail,
+  Package,
+  Plus,
+  ScrollText,
+  Settings,
+  Shield,
+  Smartphone,
+  Users,
+  type LucideIcon,
 } from 'lucide-react';
-import {
-  MOCK_PRODUCTS, getMockModules, MOCK_TEAM,
-  MOCK_VERIFY_RECORDS, MOCK_STORAGE_RECORDS, MOCK_PAY_RECORDS,
-  MOCK_NOTIFICATION_RECORDS, MOCK_SMS_RECORDS,
-  MOCK_SECRET_TEMPLATES, MOCK_FREEZE_LOG,
-  formatBytes, formatMinorUnits, formatTimestamp,
-  type Product, type ModuleStatus,
-} from '@/lib/mock-data';
 
-// ===========================================================================
-// Types
-// ===========================================================================
+// The dashboard intentionally contains no product-business entities. It only
+// displays opaque infrastructure identifiers and data returned by module APIs.
 
 type View =
-  | { type: 'login' }
   | { type: 'products' }
   | { type: 'product'; productId: string; tab: string }
   | { type: 'secret-templates' }
-  | { type: 'ai-builder' }
+  | { type: 'developer' }
   | { type: 'freeze-log' }
   | { type: 'coming-soon'; title: string };
 
-// ===========================================================================
-// Main Component
-// ===========================================================================
+type ModuleId =
+  | 'auth'
+  | 'organizations'
+  | 'configuration'
+  | 'mail'
+  | 'storage'
+  | 'pay'
+  | 'verify'
+  | 'notifications'
+  | 'sms';
+
+interface ModuleDefinition {
+  moduleId: ModuleId;
+  name: string;
+  icon: LucideIcon;
+  providerBacked: boolean;
+  listKey?: 'items' | 'verifications' | 'notifications';
+  idField?: string;
+}
+
+const MODULES: ModuleDefinition[] = [
+  { moduleId: 'auth', name: 'Auth', icon: Shield, providerBacked: true },
+  { moduleId: 'organizations', name: 'Organizations', icon: Users, providerBacked: false },
+  { moduleId: 'configuration', name: 'Configuration', icon: Settings, providerBacked: false },
+  { moduleId: 'mail', name: 'Mail', icon: Mail, providerBacked: true, listKey: 'items', idField: 'messageId' },
+  { moduleId: 'storage', name: 'Storage', icon: HardDrive, providerBacked: true, listKey: 'items', idField: 'fileId' },
+  { moduleId: 'pay', name: 'Pay', icon: CreditCard, providerBacked: true, listKey: 'items', idField: 'paymentId' },
+  { moduleId: 'verify', name: 'Verify', icon: CheckCircle2, providerBacked: true, listKey: 'verifications', idField: 'verificationId' },
+  { moduleId: 'notifications', name: 'Notifications', icon: Bell, providerBacked: false, listKey: 'notifications', idField: 'notificationId' },
+  { moduleId: 'sms', name: 'SMS', icon: Smartphone, providerBacked: true, listKey: 'items', idField: 'smsId' },
+];
+
+interface ProviderField {
+  key: string;
+  label: string;
+  secret?: boolean;
+  placeholder?: string;
+}
+
+const PROVIDER_FIELDS: Record<string, ProviderField[]> = {
+  stripe: [
+    { key: 'STRIPE_PUBLISHABLE_KEY', label: 'Publishable Key', secret: true },
+    { key: 'STRIPE_SECRET_KEY', label: 'Secret Key', secret: true },
+    { key: 'STRIPE_WEBHOOK_SECRET', label: 'Webhook Secret', secret: true },
+  ],
+  stripe_identity: [
+    { key: 'STRIPE_IDENTITY_SECRET_KEY', label: 'API Key', secret: true },
+    { key: 'STRIPE_IDENTITY_WEBHOOK_SECRET', label: 'Webhook Secret', secret: true },
+  ],
+  resend: [{ key: 'RESEND_API_KEY', label: 'API Key', secret: true }],
+  twilio: [
+    { key: 'TWILIO_ACCOUNT_SID', label: 'Account SID', secret: true },
+    { key: 'TWILIO_AUTH_TOKEN', label: 'Auth Token', secret: true },
+  ],
+  s3: [
+    { key: 'STORAGE_REGION', label: 'Region', placeholder: 'us-east-1' },
+    { key: 'STORAGE_BUCKET', label: 'Bucket' },
+    { key: 'STORAGE_ACCESS_KEY', label: 'Access Key', secret: true },
+    { key: 'STORAGE_SECRET_KEY', label: 'Secret Key', secret: true },
+  ],
+  supabase: [
+    { key: 'SUPABASE_URL', label: 'Project URL' },
+    { key: 'SUPABASE_ANON_KEY', label: 'Anon Key', secret: true },
+    { key: 'SUPABASE_SERVICE_ROLE_KEY', label: 'Service Role Key', secret: true },
+  ],
+};
 
 export default function Home() {
-  const { user, loading, login, register, logout } = useAuth();
+  const { user, loading, login, register, autoVerifyEmail, logout } = useAuth();
   const [view, setView] = useState<View>({ type: 'products' });
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [busy, setBusy] = useState(false);
 
-  // If not authenticated, show login/register.
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    );
-  }
+  if (loading) return <CenteredMessage text="Loading Codlok Cloud…" />;
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-background text-foreground">
-        <Toaster richColors position="top-right" />
-        <AuthView
-          mode={authMode}
-          onToggleMode={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-          onLogin={async (email, password) => {
-            setBusy(true);
-            const r = await login(email, password);
+      <AuthView
+        mode={authMode}
+        busy={busy}
+        onToggle={() => setAuthMode((value) => (value === 'login' ? 'register' : 'login'))}
+        onSubmit={async (email, password) => {
+          setBusy(true);
+          try {
+            if (authMode === 'login') {
+              const result = await login(email, password);
+              result.success ? toast.success('Signed in') : toast.error(result.error ?? 'Login failed');
+              return;
+            }
+            const result = await register(email, password);
+            if (!result.success) {
+              toast.error(result.error ?? 'Registration failed');
+              return;
+            }
+            const devVerification = await autoVerifyEmail(email);
+            toast.success(devVerification.success ? 'Registered and verified in development mode' : 'Registered. Check your email to verify your account.');
+            setAuthMode('login');
+          } finally {
             setBusy(false);
-            if (!r.success) toast.error(r.error ?? 'Login failed');
-            else toast.success('Logged in');
-            return r;
-          }}
-          onRegister={async (email, password) => {
-            setBusy(true);
-            const r = await register(email, password);
-            setBusy(false);
-            if (!r.success) toast.error(r.error ?? 'Registration failed');
-            else toast.success('Registered and verified! You can now sign in.');
-            return r;
-          }}
-          busy={busy}
-        />
-      </div>
+          }
+        }}
+      />
     );
   }
 
+  const shared = { onNavigate: setView, userEmail: user.email, onLogout: logout };
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Toaster richColors position="top-right" />
-      {view.type === 'products' && (
-        <ProductsView
-          accessToken={user.accessToken}
-          userEmail={user.email}
-          onLogout={logout}
-          onNavigate={setView}
-        />
-      )}
+      {view.type === 'products' && <ProductsView {...shared} accessToken={user.accessToken} />}
       {view.type === 'product' && (
         <ProductView
+          {...shared}
+          accessToken={user.accessToken}
           productId={view.productId}
           tab={view.tab}
-          accessToken={user.accessToken}
-          userEmail={user.email}
-          onLogout={logout}
-          onNavigate={setView}
           onTabChange={(tab) => setView({ type: 'product', productId: view.productId, tab })}
         />
       )}
-      {view.type === 'secret-templates' && <SecretTemplatesView onNavigate={setView} userEmail={user.email} onLogout={logout} />}
-      {view.type === 'ai-builder' && <AIBuilderView onNavigate={setView} userEmail={user.email} onLogout={logout} />}
-      {view.type === 'freeze-log' && <FreezeLogView onNavigate={setView} userEmail={user.email} onLogout={logout} />}
-      {view.type === 'coming-soon' && <ComingSoonView title={view.title} onNavigate={setView} userEmail={user.email} onLogout={logout} />}
+      {view.type === 'secret-templates' && <ComingSoonPage {...shared} title="Secret Templates" description="Requires a separately specified platform-owned secret-template backend. No fake template data is shown." />}
+      {view.type === 'developer' && <DeveloperView {...shared} />}
+      {view.type === 'freeze-log' && <FreezeLogView {...shared} />}
+      {view.type === 'coming-soon' && <ComingSoonPage {...shared} title={view.title} />}
     </div>
   );
 }
 
-// ===========================================================================
-// Auth View (Login + Register — real API calls)
-// ===========================================================================
-
-function AuthView({ mode, onToggleMode, onLogin, onRegister, busy }: {
+function AuthView({ mode, busy, onToggle, onSubmit }: {
   mode: 'login' | 'register';
-  onToggleMode: () => void;
-  onLogin: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  onRegister: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   busy: boolean;
+  onToggle: () => void;
+  onSubmit: (email: string, password: string) => Promise<void>;
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-
-  const handleSubmit = async () => {
-    if (mode === 'login') {
-      await onLogin(email, password);
-    } else {
-      await onRegister(email, password);
-    }
-  };
-
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
+    <div className="flex min-h-screen items-center justify-center bg-muted/20 p-4">
+      <Toaster richColors position="top-right" />
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary">
-            <Shield className="h-6 w-6 text-primary-foreground" />
-          </div>
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground"><Shield className="h-6 w-6" /></div>
           <CardTitle className="text-2xl">Codlok Cloud</CardTitle>
-          <CardDescription>{mode === 'login' ? 'Sign in to your platform dashboard' : 'Create your account'}</CardDescription>
+          <CardDescription>{mode === 'login' ? 'Sign in to manage your products and infrastructure.' : 'Create your Codlok Cloud account.'}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" placeholder="•••••••• (min 8 chars)" value={password} onChange={(e) => setPassword(e.target.value)} />
-          </div>
+          <div className="space-y-2"><Label htmlFor="email">Email</Label><Input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
+          <div className="space-y-2"><Label htmlFor="password">Password</Label><Input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></div>
         </CardContent>
-        <CardFooter className="flex flex-col gap-2">
-          <Button className="w-full" disabled={busy || !email || !password} onClick={handleSubmit}>
-            {busy ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Register'}
-          </Button>
-          <Button variant="link" size="sm" onClick={onToggleMode}>
-            {mode === 'login' ? "Don't have an account? Register" : 'Already have an account? Sign in'}
-          </Button>
+        <CardFooter className="flex-col gap-2">
+          <Button className="w-full" disabled={busy || !email || password.length < 8} onClick={() => onSubmit(email, password)}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Register'}</Button>
+          <Button variant="link" onClick={onToggle}>{mode === 'login' ? 'Create an account' : 'Back to sign in'}</Button>
         </CardFooter>
       </Card>
     </div>
   );
 }
 
-// ===========================================================================
-// Shared Sidebar (Platform-level navigation)
-// ===========================================================================
-
-function PlatformSidebar({ onNavigate, active, userEmail, onLogout }: {
-  onNavigate: (v: View) => void;
+function PlatformShell({ children, active, onNavigate, userEmail, onLogout }: {
+  children: ReactNode;
   active: string;
-  userEmail?: string;
-  onLogout?: () => void;
+  onNavigate: (view: View) => void;
+  userEmail: string;
+  onLogout: () => void;
 }) {
   return (
-    <div className="flex h-screen w-64 flex-col border-r bg-muted/30">
-      <div className="flex h-14 items-center gap-2 border-b px-6">
-        <Shield className="h-5 w-5 text-primary" />
-        <span className="font-semibold">Codlok Cloud</span>
-      </div>
-      <nav className="flex-1 space-y-1 p-3">
-        <SidebarLink icon={Package} label="Products" active={active === 'products'} onClick={() => onNavigate({ type: 'products' })} />
-        <SidebarLink icon={KeyRound} label="Secret Templates" active={active === 'secret-templates'} onClick={() => onNavigate({ type: 'secret-templates' })} />
-        <Separator className="my-3" />
-        <div className="px-3 py-1 text-xs font-medium text-muted-foreground">Developer</div>
-        <SidebarLink icon={Bot} label="AI Builder" active={active === 'ai-builder'} onClick={() => onNavigate({ type: 'ai-builder' })} />
-        <SidebarLink icon={Code2} label="OpenAPI" active={false} onClick={() => onNavigate({ type: 'coming-soon', title: 'OpenAPI' })} />
-        <SidebarLink icon={BookOpen} label="SDK" active={false} onClick={() => onNavigate({ type: 'coming-soon', title: 'SDK' })} />
-        <SidebarLink icon={FlaskConical} label="API Explorer" active={false} onClick={() => onNavigate({ type: 'coming-soon', title: 'API Explorer' })} />
-        <SidebarLink icon={ScrollText} label="Freeze Log" active={active === 'freeze-log'} onClick={() => onNavigate({ type: 'freeze-log' })} />
-        <Separator className="my-3" />
-        {userEmail && (
-          <div className="px-3 py-2">
-            <p className="truncate text-xs text-muted-foreground">{userEmail}</p>
-            <button onClick={onLogout} className="mt-1 text-xs text-primary hover:underline">Sign Out</button>
-          </div>
-        )}
-      </nav>
+    <div className="flex h-screen">
+      <aside className="flex w-64 flex-col border-r bg-muted/20">
+        <div className="flex h-14 items-center gap-2 border-b px-5"><Shield className="h-5 w-5 text-primary" /><span className="font-semibold">Codlok Cloud</span></div>
+        <nav className="flex-1 space-y-1 p-3">
+          <NavButton icon={Package} label="Products" active={active === 'products'} onClick={() => onNavigate({ type: 'products' })} />
+          <NavButton icon={KeyRound} label="Secret Templates" active={active === 'secret-templates'} onClick={() => onNavigate({ type: 'secret-templates' })} />
+          <Separator className="my-3" />
+          <p className="px-3 text-xs font-medium text-muted-foreground">Developer</p>
+          <NavButton icon={Code2} label="Developer Context" active={active === 'developer'} onClick={() => onNavigate({ type: 'developer' })} />
+          <NavButton icon={FlaskConical} label="API Explorer" onClick={() => onNavigate({ type: 'coming-soon', title: 'API Explorer' })} />
+          <NavButton icon={BookOpen} label="OpenAPI & SDK" onClick={() => onNavigate({ type: 'coming-soon', title: 'OpenAPI & SDK' })} />
+          <NavButton icon={ScrollText} label="Freeze Log" active={active === 'freeze-log'} onClick={() => onNavigate({ type: 'freeze-log' })} />
+        </nav>
+        <div className="border-t p-4"><p className="truncate text-xs text-muted-foreground">{userEmail}</p><Button className="mt-2 w-full" size="sm" variant="outline" onClick={onLogout}>Sign Out</Button></div>
+      </aside>
+      <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
     </div>
   );
 }
 
-function SidebarLink({ icon: Icon, label, active, onClick }: { icon: React.ElementType; label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-        active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-      }`}
-    >
-      <Icon className="h-4 w-4" />
-      {label}
-    </button>
-  );
+function NavButton({ icon: Icon, label, active = false, onClick }: { icon: LucideIcon; label: string; active?: boolean; onClick: () => void }) {
+  return <button onClick={onClick} className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm ${active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}><Icon className="h-4 w-4" />{label}</button>;
 }
 
-// ===========================================================================
-// Products View
-// ===========================================================================
-
-function ProductsView({ accessToken, userEmail, onLogout, onNavigate }: {
+function ProductsView({ accessToken, onNavigate, userEmail, onLogout }: {
   accessToken: string;
+  onNavigate: (view: View) => void;
   userEmail: string;
   onLogout: () => void;
-  onNavigate: (v: View) => void;
 }) {
   const [products, setProducts] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newDesc, setNewDesc] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState('');
 
-  const loadProducts = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    const r = await orgsApi.listWorkspaces(accessToken);
-    if (r.success && r.data) {
-      setProducts(r.data);
-    } else {
-      toast.error('Failed to load products');
-      setProducts([]);
-    }
+    const result = await orgsApi.listWorkspaces(accessToken);
+    if (result.success) setProducts(result.data ?? []);
+    else toast.error(result.error?.message ?? 'Could not load products');
     setLoading(false);
   }, [accessToken]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { loadProducts(); }, [loadProducts]);
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    setCreating(true);
-    const r = await orgsApi.createWorkspace(accessToken, newName.trim(), newDesc.trim() || undefined);
-    setCreating(false);
-    if (r.success && r.data) {
-      toast.success(`Product "${r.data.name}" created`);
-      setNewName('');
-      setNewDesc('');
-      setShowCreate(false);
-      loadProducts();
-    } else {
-      toast.error(r.error?.message ?? 'Failed to create product');
-    }
-  };
+  useEffect(() => { void load(); }, [load]);
 
   return (
-    <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="products" userEmail={userEmail} onLogout={onLogout} />
-      <div className="flex-1 overflow-y-auto">
-        <div className="border-b px-8 py-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-xl font-semibold">Products</h1>
-            <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
-              <Plus className="mr-1 h-4 w-4" /> Create Product
-            </Button>
-          </div>
-        </div>
-        {showCreate && (
-          <div className="border-b bg-muted/30 px-8 py-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <div className="flex-1 space-y-1">
-                <Label htmlFor="new-name" className="text-xs">Product Name</Label>
-                <Input id="new-name" placeholder="My Product" value={newName} onChange={(e) => setNewName(e.target.value)} />
-              </div>
-              <div className="flex-1 space-y-1">
-                <Label htmlFor="new-desc" className="text-xs">Description (optional)</Label>
-                <Input id="new-desc" placeholder="What does this product do?" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
-              </div>
-              <Button size="sm" disabled={creating || !newName.trim()} onClick={handleCreate}>
-                {creating ? 'Creating...' : 'Create'}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
-            </div>
-          </div>
-        )}
-        {loading ? (
-          <div className="p-8"><p className="text-muted-foreground">Loading products...</p></div>
-        ) : products.length === 0 ? (
-          <div className="p-8">
-            <Card>
-              <CardContent className="py-12 text-center">
-                <Package className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">No products yet. Create your first product to get started.</p>
-              </CardContent>
-            </Card>
-          </div>
-        ) : (
-          <div className="grid gap-4 p-8 md:grid-cols-2 lg:grid-cols-3">
-            {products.map((p) => (
-              <Card key={p.id} className="cursor-pointer hover:border-primary transition-colors" onClick={() => onNavigate({ type: 'product', productId: p.id, tab: 'overview' })}>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">{p.name}</CardTitle>
-                    <Badge variant="default">Active</Badge>
-                  </div>
-                  <CardDescription>{p.description ?? 'No description'}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-xs text-muted-foreground">Created {formatTimestamp(p.createdAt)}</p>
-                </CardContent>
-                <CardFooter className="flex items-center justify-end">
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                </CardFooter>
-              </Card>
-            ))}
-          </div>
+    <PlatformShell active="products" onNavigate={onNavigate} userEmail={userEmail} onLogout={onLogout}>
+      <header className="flex items-center justify-between border-b px-8 py-5"><div><h1 className="text-2xl font-semibold">Products</h1><p className="text-sm text-muted-foreground">Each product is an isolated Codlok workspace.</p></div></header>
+      <div className="space-y-6 p-8">
+        <Card><CardContent className="flex gap-3 p-4"><Input placeholder="New product name" value={name} onChange={(event) => setName(event.target.value)} /><Button disabled={!name.trim()} onClick={async () => { const result = await orgsApi.createWorkspace(accessToken, name.trim()); if (result.success) { setName(''); toast.success('Product created'); await load(); } else toast.error(result.error?.message ?? 'Could not create product'); }}><Plus className="mr-2 h-4 w-4" />Create Product</Button></CardContent></Card>
+        {loading ? <CenteredMessage text="Loading products…" /> : products.length === 0 ? <EmptyState title="No products yet" description="Create your first isolated workspace above." /> : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{products.map((product) => <Card key={product.id} className="cursor-pointer hover:border-primary" onClick={() => onNavigate({ type: 'product', productId: product.id, tab: 'overview' })}><CardHeader><div className="flex items-center justify-between"><CardTitle>{product.name}</CardTitle><Badge>Active</Badge></div><CardDescription>{product.description ?? product.slug}</CardDescription></CardHeader><CardFooter className="justify-between text-xs text-muted-foreground"><span>{formatTimestamp(product.createdAt)}</span><ChevronRight className="h-4 w-4" /></CardFooter></Card>)}</div>
         )}
       </div>
-    </div>
+    </PlatformShell>
   );
 }
-
-// ===========================================================================
-// Product View (with tabs: Overview, Modules, Health, Team, etc.)
-// ===========================================================================
 
 function ProductView({ productId, tab, accessToken, userEmail, onLogout, onNavigate, onTabChange }: {
   productId: string;
@@ -366,729 +289,259 @@ function ProductView({ productId, tab, accessToken, userEmail, onLogout, onNavig
   accessToken: string;
   userEmail: string;
   onLogout: () => void;
-  onNavigate: (v: View) => void;
+  onNavigate: (view: View) => void;
   onTabChange: (tab: string) => void;
 }) {
   const [product, setProduct] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    orgsApi.getWorkspace(accessToken, productId).then((r) => {
-      if (r.success && r.data) setProduct(r.data);
+    orgsApi.getWorkspace(accessToken, productId).then((result) => {
+      setProduct(result.success ? result.data ?? null : null);
       setLoading(false);
     });
   }, [accessToken, productId]);
-  if (loading) return <div className="flex h-screen items-center justify-center"><p className="text-muted-foreground">Loading product...</p></div>;
-  if (!product) return <div className="flex h-screen items-center justify-center"><p className="text-muted-foreground">Product not found</p></div>;
-  const modules = getMockModules(productId);
+
+  if (loading) return <CenteredMessage text="Loading product…" />;
+  if (!product) return <CenteredMessage text="Product not found or access denied." />;
 
   const tabs = [
-    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'modules', label: 'Modules', icon: Cpu },
-    { id: 'health', label: 'Health', icon: Activity },
-    { id: 'team', label: 'Team', icon: Users },
-    { id: 'api-keys', label: 'API Keys', icon: KeyRound },
-    { id: 'monitoring', label: 'Monitoring', icon: Activity },
-    { id: 'logs', label: 'Logs', icon: FileText },
-    { id: 'settings', label: 'Settings', icon: Settings },
-  ];
+    ['overview', 'Overview', LayoutDashboard],
+    ['modules', 'Modules', Cpu],
+    ['providers', 'Providers', KeyRound],
+    ['health', 'Health', Activity],
+    ['team', 'Team', Users],
+    ['api-keys', 'API Keys', KeyRound],
+    ['monitoring', 'Monitoring', Activity],
+    ['logs', 'Logs', FileText],
+    ['settings', 'Settings', Settings],
+  ] as const;
 
   return (
-    <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="products" userEmail={userEmail} onLogout={onLogout} />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Product header with tabs */}
-        <div className="border-b">
-          <div className="flex items-center gap-3 px-8 py-3">
-            <Button variant="ghost" size="sm" onClick={() => onNavigate({ type: 'products' })}>
-              <ArrowLeft className="mr-1 h-4 w-4" /> Products
-            </Button>
-            <Separator orientation="vertical" className="h-6" />
-            <h1 className="text-lg font-semibold">{product.name}</h1>
-            <Badge variant="outline" className="text-xs">{product.slug}</Badge>
-          </div>
-          <div className="flex gap-1 px-8 pb-0">
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => onTabChange(t.id)}
-                className={`flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-                  tab === t.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <t.icon className="h-4 w-4" />
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {/* Tab content */}
-        <div className="flex-1 overflow-y-auto p-8">
-          {tab.startsWith('module-') && (
-            <div className="space-y-4">
-              <Button variant="ghost" size="sm" onClick={() => onTabChange('modules')}>
-                <ArrowLeft className="mr-1 h-4 w-4" /> Back to Modules
-              </Button>
-              <ModuleDetailPage moduleId={tab.replace('module-', '')} productId={productId} />
-            </div>
-          )}
-          {tab === 'overview' && <OverviewTab product={product} modules={modules} onNavigate={onNavigate} />}
-          {tab === 'modules' && <ModulesTab productId={productId} onNavigate={onNavigate} />}
-          {tab === 'health' && <HealthTab modules={modules} />}
-          {tab === 'team' && <TeamTab />}
-          {tab === 'api-keys' && <PlaceholderTab title="API Keys" />}
-          {tab === 'monitoring' && <PlaceholderTab title="Monitoring" />}
-          {tab === 'logs' && <PlaceholderTab title="Logs" />}
-          {tab === 'settings' && <PlaceholderTab title="Settings" />}
-        </div>
+    <PlatformShell active="products" onNavigate={onNavigate} userEmail={userEmail} onLogout={onLogout}>
+      <header className="border-b">
+        <div className="flex items-center gap-3 px-8 py-4"><Button variant="ghost" size="sm" onClick={() => onNavigate({ type: 'products' })}><ArrowLeft className="mr-1 h-4 w-4" />Products</Button><Separator orientation="vertical" className="h-6" /><h1 className="text-lg font-semibold">{product.name}</h1><Badge variant="outline">{product.slug}</Badge></div>
+        <div className="flex gap-1 overflow-x-auto px-8">{tabs.map(([id, label, Icon]) => <button key={id} onClick={() => onTabChange(id)} className={`flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2 text-sm ${tab === id || tab.startsWith(`${id}-`) ? 'border-primary text-primary' : 'border-transparent text-muted-foreground'}`}><Icon className="h-4 w-4" />{label}</button>)}</div>
+      </header>
+      <div className="p-8">
+        {tab === 'overview' && <Overview workspaceId={productId} accessToken={accessToken} onOpenModule={(moduleId) => onTabChange(`module-${moduleId}`)} />}
+        {tab === 'modules' && <ModulesView workspaceId={productId} accessToken={accessToken} onOpenModule={(moduleId) => onTabChange(`module-${moduleId}`)} />}
+        {tab.startsWith('module-') && <ModuleRecordsView workspaceId={productId} accessToken={accessToken} moduleId={tab.slice('module-'.length) as ModuleId} onBack={() => onTabChange('modules')} />}
+        {tab === 'providers' && <ProvidersView workspaceId={productId} accessToken={accessToken} />}
+        {tab === 'health' && <HealthView workspaceId={productId} accessToken={accessToken} />}
+        {tab === 'team' && <TeamView workspaceId={productId} accessToken={accessToken} />}
+        {['api-keys', 'monitoring', 'logs', 'settings'].includes(tab) && <ComingSoonCard title={tabs.find(([id]) => id === tab)?.[1] ?? tab} />}
       </div>
-    </div>
+    </PlatformShell>
   );
 }
 
-// ===========================================================================
-// Overview Tab
-// ===========================================================================
-
-function OverviewTab({ product, modules, onNavigate }: { product: Workspace; modules: ModuleStatus[]; onNavigate: (v: View) => void }) {
-  const operational = modules.filter((m) => m.status === 'operational').length;
-  const notConfigured = modules.filter((m) => m.status === 'not_configured').length;
-
-  return (
-    <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-4">
-        <StatCard label="Modules" value={modules.length} icon={Cpu} />
-        <StatCard label="Operational" value={operational} icon={CheckCircle2} />
-        <StatCard label="Not Configured" value={notConfigured} icon={AlertTriangle} />
-        <StatCard label="Status" value="Active" icon={Activity} />
-      </div>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Module List</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-1">
-            {modules.map((m) => (
-              <div key={m.moduleId} className="flex items-center justify-between rounded-md border px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <ModuleIcon moduleId={m.moduleId} />
-                  <div>
-                    <p className="text-sm font-medium">{m.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {m.provider !== '—' ? `Provider: ${m.provider}` : 'No provider'}
-                      {' · '}
-                      {m.recordCount} records
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={m.status} />
-                  <Button variant="ghost" size="sm"
-                    onClick={() => onNavigate({ type: 'product', productId: product.id, tab: `module-${m.moduleId}` })}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
+function useModuleStatuses(accessToken: string, workspaceId: string) {
+  const [statuses, setStatuses] = useState<Record<string, ProviderStatusDto | null>>({});
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all(MODULES.map(async (module) => {
+      if (!module.providerBacked) return [module.moduleId, null] as const;
+      const result = await configStatusApi.getStatus(accessToken, workspaceId, module.moduleId);
+      return [module.moduleId, result.success ? result.data ?? null : null] as const;
+    })).then((entries) => { if (!cancelled) { setStatuses(Object.fromEntries(entries)); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [accessToken, workspaceId]);
+  return { statuses, loading };
 }
 
-// ===========================================================================
-// Modules Tab (list + detail pages)
-// ===========================================================================
+function Overview({ workspaceId, accessToken, onOpenModule }: { workspaceId: string; accessToken: string; onOpenModule: (id: ModuleId) => void }) {
+  const { statuses, loading } = useModuleStatuses(accessToken, workspaceId);
+  const configured = MODULES.filter((module) => !module.providerBacked || statuses[module.moduleId]?.configured).length;
+  return <div className="space-y-6"><div className="grid gap-4 md:grid-cols-3"><StatCard label="Modules" value={MODULES.length} /><StatCard label="Operational / configured" value={loading ? '…' : configured} /><StatCard label="Workspace isolation" value="Enabled" /></div><ModuleGrid statuses={statuses} onOpenModule={onOpenModule} /></div>;
+}
 
-function ModulesTab({ productId, onNavigate }: { productId: string; onNavigate: (v: View) => void }) {
-  const modules = getMockModules(productId);
+function ModulesView({ workspaceId, accessToken, onOpenModule }: { workspaceId: string; accessToken: string; onOpenModule: (id: ModuleId) => void }) {
+  const { statuses } = useModuleStatuses(accessToken, workspaceId);
+  return <div className="space-y-4"><h2 className="text-xl font-semibold">Modules</h2><ModuleGrid statuses={statuses} onOpenModule={onOpenModule} /></div>;
+}
+
+function ModuleGrid({ statuses, onOpenModule }: { statuses: Record<string, ProviderStatusDto | null>; onOpenModule: (id: ModuleId) => void }) {
+  return <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{MODULES.map((module) => { const status = statuses[module.moduleId]; const configured = !module.providerBacked || status?.configured; const Icon = module.icon; return <Card key={module.moduleId} className="cursor-pointer hover:border-primary" onClick={() => onOpenModule(module.moduleId)}><CardHeader><div className="flex items-center justify-between"><div className="flex items-center gap-2"><Icon className="h-5 w-5 text-primary" /><CardTitle className="text-base">{module.name}</CardTitle></div><Badge variant={configured ? 'default' : 'outline'}>{configured ? 'Operational' : 'Not configured'}</Badge></div></CardHeader><CardContent className="text-xs text-muted-foreground">{status?.missingKeys.length ? `${status.missingKeys.length} required value(s) missing` : module.providerBacked ? 'Provider configuration complete' : 'Internal platform module'}</CardContent></Card>; })}</div>;
+}
+
+function ModuleRecordsView({ workspaceId, accessToken, moduleId, onBack }: { workspaceId: string; accessToken: string; moduleId: ModuleId; onBack: () => void }) {
+  const definition = MODULES.find((module) => module.moduleId === moduleId);
+  const [records, setRecords] = useState<Record<string, unknown>[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+
+  const load = useCallback(async (append = false, cursorOverride?: string) => {
+    if (!definition?.listKey) return;
+    setLoading(true); setError('');
+    const result = await moduleDataApi.list(accessToken, moduleId, workspaceId, append ? cursorOverride : undefined);
+    if (!result.success || !result.data) { setError(result.error?.message ?? 'Could not load records'); setLoading(false); return; }
+    const raw = result.data;
+    const items = (raw[definition.listKey] ?? []) as Record<string, unknown>[];
+    setRecords((previous) => append ? [...previous, ...items] : items);
+    setHasMore(Boolean(raw.hasMore));
+    setNextCursor((raw.nextCursor as string | null | undefined) ?? null);
+    setLoading(false);
+  }, [accessToken, definition, moduleId, workspaceId]);
+
+  useEffect(() => { setRecords([]); setCursor(undefined); setSelected(null); void load(false); }, [moduleId, workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!definition) return <EmptyState title="Unknown module" description={moduleId} />;
+  const Icon = definition.icon;
+  if (!definition.listKey) return <div className="space-y-4"><Button variant="ghost" onClick={onBack}><ArrowLeft className="mr-2 h-4 w-4" />Modules</Button><Card><CardHeader><CardTitle className="flex items-center gap-2"><Icon className="h-5 w-5" />{definition.name}</CardTitle><CardDescription>This module has no operational record collection exposed to the dashboard.</CardDescription></CardHeader></Card></div>;
+
+  return <div className="space-y-4"><Button variant="ghost" onClick={onBack}><ArrowLeft className="mr-2 h-4 w-4" />Modules</Button><div><h2 className="flex items-center gap-2 text-xl font-semibold"><Icon className="h-5 w-5 text-primary" />{definition.name}</h2><p className="text-sm text-muted-foreground">Infrastructure records only. Business meaning remains inside the consuming product.</p></div>{error && <Card className="border-destructive"><CardContent className="p-4 text-sm text-destructive">{error}</CardContent></Card>}{!loading && records.length === 0 && !error ? <EmptyState title="No records found" description="This workspace has no records for this module." /> : <Card><CardContent className="space-y-2 p-4">{records.map((record) => { const id = String(record[definition.idField ?? 'id'] ?? 'unknown'); return <button key={id} className="w-full rounded-md border p-3 text-left hover:bg-muted" onClick={async () => { const result = await moduleDataApi.get(accessToken, moduleId, workspaceId, id); if (result.success) setSelected(result.data ?? record); else toast.error(result.error?.message ?? 'Could not load record'); }}><div className="flex items-center justify-between"><span className="font-mono text-sm font-medium">{id}</span><span className="text-xs text-muted-foreground">{summarizeRecord(record)}</span></div></button>; })}{loading && <p className="p-3 text-sm text-muted-foreground">Loading…</p>}{hasMore && <Button variant="outline" disabled={loading || !nextCursor} onClick={() => { const token = nextCursor ?? undefined; setCursor(token); void load(true, token); }}>Load More</Button>}</CardContent></Card>}{selected && <Card><CardHeader><CardTitle className="text-base">Record Detail</CardTitle><CardDescription>Only fields returned by the module public interface are displayed.</CardDescription></CardHeader><CardContent><dl className="grid gap-2 md:grid-cols-2">{Object.entries(selected).map(([key, value]) => <div key={key} className="rounded-md border p-3"><dt className="text-xs text-muted-foreground">{key}</dt><dd className="mt-1 break-all font-mono text-sm">{formatValue(key, value)}</dd></div>)}</dl></CardContent></Card>}</div>;
+}
+
+function ProvidersView({ workspaceId, accessToken }: { workspaceId: string; accessToken: string }) {
+  const [providers, setProviders] = useState<ProviderMetadataDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { providerRegistryApi.listAll(accessToken).then((result) => { if (result.success) setProviders(result.data?.providers ?? []); else toast.error(result.error?.message ?? 'Could not load providers'); setLoading(false); }); }, [accessToken]);
+  if (loading) return <CenteredMessage text="Loading providers…" />;
+  return <div className="space-y-5"><div><h2 className="text-xl font-semibold">Provider Configuration</h2><p className="text-sm text-muted-foreground">Credentials are encrypted and scoped to this product. No saved value is returned to the browser.</p></div><div className="grid gap-5 xl:grid-cols-2">{providers.map((provider) => <ProviderCard key={provider.providerId} provider={provider} workspaceId={workspaceId} accessToken={accessToken} />)}</div></div>;
+}
+
+function ProviderCard({ provider, workspaceId, accessToken }: { provider: ProviderMetadataDto; workspaceId: string; accessToken: string }) {
+  const fields = PROVIDER_FIELDS[provider.providerId] ?? [];
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [configured, setConfigured] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [active, setActive] = useState(false);
+  const [providerStatus, setProviderStatus] = useState<ProviderStatusDto | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [checks, setting, status] = await Promise.all([
+      Promise.all(fields.map(async (field) => [field.key, (await secretsApi.check(accessToken, workspaceId, field.key)).data?.configured ?? false] as const)),
+      settingsApi.get(accessToken, workspaceId, `default_provider:${provider.moduleId}`),
+      configStatusApi.getStatus(accessToken, workspaceId, provider.moduleId),
+    ]);
+    setConfigured(Object.fromEntries(checks));
+    setActive(setting.success && setting.data?.value === provider.providerId);
+    setProviderStatus(status.success ? status.data ?? null : null);
+  }, [accessToken, fields, provider.moduleId, provider.providerId, workspaceId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const saveAll = async () => {
+    setSaving(true);
+    try {
+      if (provider.providerId === 's3') await secretsApi.set(accessToken, workspaceId, 'STORAGE_PROVIDER', 's3');
+      for (const field of fields) {
+        const value = values[field.key]?.trim();
+        if (value) {
+          const result = await secretsApi.set(accessToken, workspaceId, field.key, value);
+          if (!result.success) throw new Error(result.error?.message ?? `Failed to save ${field.label}`);
+        }
+      }
+      await settingsApi.set(accessToken, workspaceId, `default_provider:${provider.moduleId}`, provider.providerId);
+      setValues({});
+      toast.success(`${provider.displayName} configuration saved`);
+      await refresh();
+    } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not save provider'); }
+    finally { setSaving(false); }
+  };
+
+  const disconnect = async () => {
+    setSaving(true);
+    try {
+      for (const field of fields) {
+        if (configured[field.key]) await secretsApi.delete(accessToken, workspaceId, field.key);
+      }
+      if (provider.providerId === 's3') await secretsApi.delete(accessToken, workspaceId, 'STORAGE_PROVIDER');
+      if (active) await settingsApi.delete(accessToken, workspaceId, `default_provider:${provider.moduleId}`);
+      toast.success(`${provider.displayName} disconnected`);
+      await refresh();
+    } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not disconnect provider'); }
+    finally { setSaving(false); }
+  };
+
+  const statusLabel = providerStatus?.configured
+    ? (active ? 'Selected & configured' : 'Configured')
+    : Object.values(configured).some(Boolean)
+      ? 'Partially configured'
+      : 'Not configured';
+
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Modules</h2>
-      <div className="grid gap-4 md:grid-cols-2">
-        {modules.map((m) => (
-          <Card key={m.moduleId} className="cursor-pointer hover:border-primary transition-colors"
-            onClick={() => onNavigate({ type: 'product', productId, tab: `module-${m.moduleId}` })}
-          >
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ModuleIcon moduleId={m.moduleId} />
-                  <CardTitle className="text-base">{m.name}</CardTitle>
-                </div>
-                <StatusBadge status={m.status} />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <p className="text-xs text-muted-foreground">
-                Provider: {m.provider ?? 'Not configured'} · {m.recordCount} records
-              </p>
-            </CardContent>
-          </Card>
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div><CardTitle className="text-base">{provider.displayName}</CardTitle><CardDescription>{provider.category} · {provider.routing}</CardDescription></div>
+          <Badge variant={providerStatus?.configured ? 'default' : 'outline'}>{statusLabel}</Badge>
+        </div>
+        {providerStatus?.missingKeys?.length ? <CardDescription>Missing: {providerStatus.missingKeys.join(', ')}</CardDescription> : null}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {fields.length === 0 ? <p className="text-sm text-muted-foreground">No Phase 3 configuration component exists for this provider.</p> : fields.map((field) => (
+          <div key={field.key} className="space-y-2">
+            <div className="flex justify-between"><Label htmlFor={`${provider.providerId}-${field.key}`}>{field.label}</Label>{configured[field.key] && <span className="text-xs text-emerald-600">Configured</span>}</div>
+            <div className="flex gap-2"><Input id={`${provider.providerId}-${field.key}`} type={field.secret ? 'password' : 'text'} placeholder={configured[field.key] ? 'Enter a replacement value' : field.placeholder} value={values[field.key] ?? ''} onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))} />{configured[field.key] && <Button variant="outline" onClick={async () => { const result = await secretsApi.delete(accessToken, workspaceId, field.key); result.success ? toast.success(`${field.label} removed`) : toast.error(result.error?.message ?? 'Delete failed'); await refresh(); }}>Delete</Button>}</div>
+          </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-// ===========================================================================
-// Module Detail Pages (opaque IDs only — §23 Binding Display Rule)
-// ===========================================================================
-
-function ModuleDetailPage({ moduleId, productId }: { moduleId: string; productId: string }) {
-  const modules = getMockModules(productId);
-  const moduleInfo = modules.find((m) => m.moduleId === moduleId);
-  if (!moduleInfo) return <div>Module not found</div>;
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <ModuleIcon moduleId={moduleId} />
-        <div>
-          <h2 className="text-lg font-semibold">{moduleInfo.name}</h2>
-          <p className="text-xs text-muted-foreground">
-            Provider: {moduleInfo.provider ?? 'Not configured'} · {moduleInfo.recordCount} records
-          </p>
-        </div>
-      </div>
-      {moduleId === 'verify' && <VerifyDetail />}
-      {moduleId === 'storage' && <StorageDetail />}
-      {moduleId === 'pay' && <PayDetail />}
-      {moduleId === 'notifications' && <NotificationsDetail />}
-      {moduleId === 'sms' && <SmsDetail />}
-      {moduleId === 'auth' && <SimpleModuleDetail moduleInfo={moduleInfo} fields={['userId', 'email', 'emailVerified']} />}
-      {moduleId === 'organizations' && <SimpleModuleDetail moduleInfo={moduleInfo} fields={['workspaceId', 'role', 'permissions']} />}
-      {moduleId === 'configuration' && <SimpleModuleDetail moduleInfo={moduleInfo} fields={['key', 'version', 'updatedAt']} />}
-      {moduleId === 'mail' && <SimpleModuleDetail moduleInfo={moduleInfo} fields={['messageId', 'status', 'provider']} />}
-    </div>
-  );
-}
-
-function VerifyDetail() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Verification Records</CardTitle>
-        <CardDescription>Opaque IDs only — no business entity names (§20 Data Minimization, §23 Display Rule)</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
-          {MOCK_VERIFY_RECORDS.map((r) => (
-            <div key={r.verificationId} className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">
-              <div className="flex items-center gap-4">
-                <span className="font-mono font-medium">{r.verificationId}</span>
-                <Badge variant="outline">{r.status}</Badge>
-                <span className="text-muted-foreground">{r.verificationType}</span>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span>{r.provider}</span>
-                <span>{formatTimestamp(r.updatedAt)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
       </CardContent>
+      <CardFooter className="flex flex-wrap justify-between gap-2">
+        <div className="flex gap-2"><Button onClick={saveAll} disabled={saving || fields.every((field) => !(values[field.key] ?? '').trim())}>{saving ? 'Saving…' : active ? 'Update' : 'Save & Select'}</Button>{Object.values(configured).some(Boolean) && <Button variant="destructive" onClick={disconnect} disabled={saving}>Disconnect</Button>}</div>
+        {provider.supportsTestConnection && <Button variant="outline" disabled title="Provider adapter connection testing is intentionally not implemented yet.">Test Connection — Coming Soon</Button>}
+      </CardFooter>
     </Card>
   );
 }
 
-function StorageDetail() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">File Records</CardTitle>
-        <CardDescription>Opaque IDs only — no filenames (§3.10 File Ownership, §23 Display Rule)</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
-          {MOCK_STORAGE_RECORDS.map((r) => (
-            <div key={r.fileId} className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">
-              <div className="flex items-center gap-4">
-                <span className="font-mono font-medium">{r.fileId}</span>
-                <Badge variant="outline">{r.state}</Badge>
-                <span className="text-muted-foreground">{r.mimeType}</span>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span>{r.state === 'UPLOADED' ? formatBytes(r.sizeBytes) : '—'}</span>
-                <span>{formatTimestamp(r.createdAt)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
+function TeamView({ workspaceId, accessToken }: { workspaceId: string; accessToken: string }) {
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { orgsApi.listMembersWithIdentity(accessToken, workspaceId).then((result) => { if (result.success) setMembers(result.data ?? []); else toast.error(result.error?.message ?? 'Could not load team'); setLoading(false); }); }, [accessToken, workspaceId]);
+  return <div className="space-y-4"><div><h2 className="text-xl font-semibold">Team</h2><p className="text-sm text-muted-foreground">Codlok workspace access only — not the product's customers or tenants.</p></div>{loading ? <CenteredMessage text="Loading team…" /> : members.length === 0 ? <EmptyState title="No members" description="No workspace members were returned." /> : <Card><CardContent className="space-y-2 p-4">{members.map((member) => <div key={member.memberId} className="flex items-center justify-between rounded-md border p-3"><div><p className="text-sm font-medium">{member.email ?? member.userId}</p><p className="text-xs text-muted-foreground">Joined {formatTimestamp(member.joinedAt)}</p></div><Badge variant={member.roleName === 'Owner' ? 'default' : 'outline'}>{member.roleName}</Badge></div>)}</CardContent></Card>}</div>;
 }
 
-function PayDetail() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Payment Records</CardTitle>
-        <CardDescription>Opaque IDs only — no business labels (§3.12 Financial Ownership, §23 Display Rule)</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
-          {MOCK_PAY_RECORDS.map((r) => (
-            <div key={r.paymentId} className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">
-              <div className="flex items-center gap-4">
-                <span className="font-mono font-medium">{r.paymentId}</span>
-                <Badge variant="outline">{r.status}</Badge>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span>{formatMinorUnits(r.amountMinorUnits, r.currency)}</span>
-                <span>{r.provider}</span>
-                <span>{formatTimestamp(r.updatedAt)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
+function HealthView({ workspaceId, accessToken }: { workspaceId: string; accessToken: string }) {
+  const { statuses, loading } = useModuleStatuses(accessToken, workspaceId);
+  return <div className="space-y-4"><div><h2 className="text-xl font-semibold">Health</h2><p className="text-sm text-muted-foreground">Current configuration readiness only. Uptime and latency remain unavailable until instrumentation is implemented.</p></div>{loading ? <CenteredMessage text="Checking module configuration…" /> : <ModuleGrid statuses={statuses} onOpenModule={() => undefined} />}</div>;
 }
 
-function NotificationsDetail() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Notification Records</CardTitle>
-        <CardDescription>Opaque IDs only — no business labels (§23 Display Rule)</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
-          {MOCK_NOTIFICATION_RECORDS.map((r) => (
-            <div key={r.notificationId} className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">
-              <div className="flex items-center gap-4">
-                <span className="font-mono font-medium">{r.notificationId}</span>
-                <Badge variant="outline">{r.overallStatus}</Badge>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span>
-                  {Object.entries(r.channels).map(([ch, v]) => `${ch}: ${v.status}`).join(', ') || '—'}
-                </span>
-                <span>{formatTimestamp(r.createdAt)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
+function DeveloperView({ onNavigate, userEmail, onLogout }: { onNavigate: (view: View) => void; userEmail: string; onLogout: () => void }) {
+  return <PlatformShell active="developer" onNavigate={onNavigate} userEmail={userEmail} onLogout={onLogout}><div className="border-b px-8 py-5"><h1 className="text-2xl font-semibold">Developer Context</h1><p className="text-sm text-muted-foreground">Resources for external coding agents that build against Codlok Cloud.</p></div><div className="grid gap-4 p-8 md:grid-cols-2"><Card><CardHeader><CardTitle>Master Specification</CardTitle><CardDescription>The canonical module contracts, ownership rules and error shapes.</CardDescription></CardHeader><CardFooter><Button disabled>Download Context — Coming Soon</Button></CardFooter></Card><ComingSoonCard title="OpenAPI, SDK and API Explorer" /></div></PlatformShell>;
 }
 
-function SmsDetail() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">SMS Records</CardTitle>
-        <CardDescription>Opaque IDs only — no recipient phone numbers (§22, §23 Display Rule)</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
-          {MOCK_SMS_RECORDS.map((r) => (
-            <div key={r.smsId} className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">
-              <div className="flex items-center gap-4">
-                <span className="font-mono font-medium">{r.smsId}</span>
-                <Badge variant="outline">{r.status}</Badge>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span>{r.provider}</span>
-                <span>{formatTimestamp(r.createdAt)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
+function FreezeLogView({ onNavigate, userEmail, onLogout }: { onNavigate: (view: View) => void; userEmail: string; onLogout: () => void }) {
+  return <PlatformShell active="freeze-log" onNavigate={onNavigate} userEmail={userEmail} onLogout={onLogout}><div className="border-b px-8 py-5"><h1 className="text-2xl font-semibold">Freeze Log</h1><p className="text-sm text-muted-foreground">Static platform documentation, not editable configuration.</p></div><div className="p-8"><Card><CardContent className="p-0"><div className="divide-y">{MOCK_FREEZE_LOG.map((entry) => <div key={entry.module} className="grid grid-cols-3 gap-4 p-4 text-sm"><span className="font-medium">{entry.module}</span><span className="font-mono text-muted-foreground">{entry.version}</span><Badge className="w-fit" variant={entry.status === 'Frozen' ? 'default' : 'outline'}>{entry.status}</Badge></div>)}</div></CardContent></Card></div></PlatformShell>;
 }
 
-function SimpleModuleDetail({ moduleInfo, fields }: { moduleInfo: ModuleStatus; fields: string[] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{moduleInfo.name} Records</CardTitle>
-        <CardDescription>Opaque infrastructure data only — {fields.join(', ')}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">
-          {moduleInfo.recordCount} records · Provider: {moduleInfo.provider ?? 'N/A'} · Status: {moduleInfo.status}
-        </p>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Last activity: {formatTimestamp(moduleInfo.lastActivity)}
-        </p>
-      </CardContent>
-    </Card>
-  );
+function ComingSoonPage({ title, description, onNavigate, userEmail, onLogout }: { title: string; description?: string; onNavigate: (view: View) => void; userEmail: string; onLogout: () => void }) {
+  return <PlatformShell active={title === 'Secret Templates' ? 'secret-templates' : ''} onNavigate={onNavigate} userEmail={userEmail} onLogout={onLogout}><div className="flex min-h-full items-center justify-center p-8"><ComingSoonCard title={title} description={description} /></div></PlatformShell>;
 }
 
-// ===========================================================================
-// Health Tab
-// ===========================================================================
-
-function HealthTab({ modules }: { modules: ModuleStatus[] }) {
-  return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-semibold">System Health</h2>
-      <div className="grid gap-4 md:grid-cols-2">
-        {modules.map((m) => (
-          <Card key={m.moduleId}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ModuleIcon moduleId={m.moduleId} />
-                  <CardTitle className="text-base">{m.name}</CardTitle>
-                </div>
-                <StatusBadge status={m.status} />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <p className="text-xs text-muted-foreground">
-                Provider: {m.provider ?? 'N/A'} · Last activity: {formatTimestamp(m.lastActivity)}
-              </p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    </div>
-  );
+function ComingSoonCard({ title, description }: { title: string; description?: string }) {
+  return <Card className="w-full max-w-2xl"><CardHeader><div className="mb-2 flex h-10 w-10 items-center justify-center rounded-lg bg-muted"><Lock className="h-5 w-5" /></div><CardTitle>{title}</CardTitle><CardDescription>{description ?? 'This feature is deliberately marked Coming Soon because its backend contract has not been designed and frozen.'}</CardDescription></CardHeader></Card>;
 }
 
-// ===========================================================================
-// Team Tab (§23: "Team" not "Organizations")
-// ===========================================================================
-
-function TeamTab() {
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Team</h2>
-          <p className="text-sm text-muted-foreground">
-            Codlok access control for this product (Owner/Admin/Member per §12). Not a product's own customers.
-          </p>
-        </div>
-        <Button size="sm" variant="outline" onClick={() => toast.info('Invite is not available in Track A (mock).')}>
-          <Plus className="mr-1 h-4 w-4" /> Invite Member
-        </Button>
-      </div>
-      <Card>
-        <CardContent className="p-0">
-          <div className="space-y-1 p-4">
-            {MOCK_TEAM.map((m) => (
-              <div key={m.userId} className="flex items-center justify-between rounded-md border px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-medium">
-                    {m.email[0].toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">{m.email}</p>
-                    <p className="text-xs text-muted-foreground">Joined {formatTimestamp(m.joinedAt)}</p>
-                  </div>
-                </div>
-                <Badge variant={m.role === 'Owner' ? 'default' : 'outline'}>{m.role}</Badge>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
+function StatCard({ label, value }: { label: string; value: string | number }) {
+  return <Card><CardHeader className="pb-2"><CardDescription>{label}</CardDescription><CardTitle className="text-2xl">{value}</CardTitle></CardHeader></Card>;
 }
 
-// ===========================================================================
-// Secret Templates View (§23: copy-not-inherit, mocked Apply Template)
-// ===========================================================================
-
-function SecretTemplatesView({ onNavigate, userEmail, onLogout }: { onNavigate: (v: View) => void; userEmail: string; onLogout: () => void }) {
-  const [applying, setApplying] = useState<string | null>(null);
-
-  const handleApply = (templateId: string, templateName: string) => {
-    setApplying(templateId);
-    // Mock: simulate a brief delay then show success.
-    setTimeout(() => {
-      setApplying(null);
-      toast.success(`Template "${templateName}" would be copied into the selected product's Configuration store. (Mocked — Track B required for real wiring.)`);
-    }, 800);
-  };
-
-  return (
-    <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="secret-templates" userEmail={userEmail} onLogout={onLogout} />
-      <div className="flex-1 overflow-y-auto">
-        <div className="border-b px-8 py-4">
-          <h1 className="text-xl font-semibold">Secret Templates</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Templates are copied into each product's Configuration when applied. Editing a template never changes existing products.
-          </p>
-        </div>
-        <div className="p-8">
-          <Card className="mb-6 border-amber-500/30 bg-amber-500/5">
-            <CardContent className="flex items-start gap-3 py-4">
-              <Lock className="mt-0.5 h-5 w-5 text-amber-500" />
-              <div className="text-sm">
-                <p className="font-medium">Secret Templates backend is not yet built (Track B).</p>
-                <p className="text-muted-foreground">
-                  "Apply Template" is a mocked UI interaction only. Real wiring requires an additive Configuration v1.3
-                  extension for platform-owned secrets — not yet designed or frozen.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-          <div className="grid gap-4 md:grid-cols-2">
-            {MOCK_SECRET_TEMPLATES.map((t) => (
-              <Card key={t.id}>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base">{t.name}</CardTitle>
-                    <Badge variant="outline">{t.keys.length} keys</Badge>
-                  </div>
-                  <CardDescription>{t.description}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-1">
-                    {t.keys.map((k) => (
-                      <div key={k.key} className="flex items-center gap-2 text-xs">
-                        <KeyRound className="h-3 w-3 text-muted-foreground" />
-                        <span className="font-mono">{k.key}</span>
-                        <span className="text-muted-foreground">— {k.description}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="mt-3 text-xs text-muted-foreground">Last updated: {formatTimestamp(t.lastUpdated)}</p>
-                </CardContent>
-                <CardFooter>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={applying === t.id}
-                    onClick={() => handleApply(t.id, t.name)}
-                  >
-                    {applying === t.id ? 'Applying...' : 'Apply Template'}
-                  </Button>
-                </CardFooter>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+function EmptyState({ title, description }: { title: string; description: string }) {
+  return <Card><CardContent className="p-8 text-center"><p className="font-medium">{title}</p><p className="mt-1 text-sm text-muted-foreground">{description}</p></CardContent></Card>;
 }
 
-// ===========================================================================
-// AI Builder View
-// ===========================================================================
-
-function AIBuilderView({ onNavigate, userEmail, onLogout }: { onNavigate: (v: View) => void; userEmail: string; onLogout: () => void }) {
-  return (
-    <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="ai-builder" userEmail={userEmail} onLogout={onLogout} />
-      <div className="flex-1 overflow-y-auto">
-        <div className="border-b px-8 py-4">
-          <h1 className="text-xl font-semibold">AI Builder</h1>
-        </div>
-        <div className="p-8">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <Bot className="h-5 w-5 text-primary" />
-                <CardTitle className="text-base">AI-Powered Module Integration</CardTitle>
-              </div>
-              <CardDescription>
-                Describe what you want to build, and the AI Builder will suggest which Codlok modules to use and how to wire them together.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="prompt">What are you building?</Label>
-                <textarea
-                  id="prompt"
-                  className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  placeholder="e.g. I want to verify a student's identity, charge an admission fee, and send them an SMS confirmation..."
-                />
-              </div>
-              <Button onClick={() => toast.info('AI Builder is a mock in Track A. Real integration requires the AI module (not yet built).')}>
-                <Bot className="mr-1 h-4 w-4" /> Generate Integration Plan
-              </Button>
-              <div className="rounded-md border bg-muted/30 p-4">
-                <p className="text-sm text-muted-foreground">
-                  The AI Builder will eventually use the Codlok module specs to suggest:
-                </p>
-                <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                  <li>• Which modules to call (Auth → Verify → Pay → SMS)</li>
-                  <li>• The correct function call sequence per frozen specs</li>
-                  <li>• Required Configuration keys per workspace</li>
-                  <li>• Webhook handler boilerplate</li>
-                </ul>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  This requires the AI module (not yet built) and MCP Gateway (not yet designed).
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
+function CenteredMessage({ text }: { text: string }) {
+  return <div className="flex min-h-screen items-center justify-center"><p className="text-sm text-muted-foreground">{text}</p></div>;
 }
 
-// ===========================================================================
-// Freeze Log View
-// ===========================================================================
-
-function FreezeLogView({ onNavigate, userEmail, onLogout }: { onNavigate: (v: View) => void; userEmail: string; onLogout: () => void }) {
-  return (
-    <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="freeze-log" userEmail={userEmail} onLogout={onLogout} />
-      <div className="flex-1 overflow-y-auto">
-        <div className="border-b px-8 py-4">
-          <h1 className="text-xl font-semibold">Freeze Log</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Platform module status — frozen public interfaces cannot change without a Blocker Report (§15).
-          </p>
-        </div>
-        <div className="p-8">
-          <Card>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left">
-                      <th className="px-4 py-3 font-medium">Module</th>
-                      <th className="px-4 py-3 font-medium">Version</th>
-                      <th className="px-4 py-3 font-medium">Status</th>
-                      <th className="px-4 py-3 font-medium">Depends On</th>
-                      <th className="px-4 py-3 font-medium">Tests</th>
-                      <th className="px-4 py-3 font-medium">Known Backlog</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {MOCK_FREEZE_LOG.map((e, i) => (
-                      <tr key={i} className="border-b last:border-0">
-                        <td className="px-4 py-3 font-medium">{e.module}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{e.version}</td>
-                        <td className="px-4 py-3">{e.status}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{e.dependsOn}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{e.tests}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{e.knownBacklog}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
+function summarizeRecord(record: Record<string, unknown>): string {
+  const preferred = ['status', 'overallStatus', 'deliveryStatus', 'state', 'verificationType', 'currency', 'createdAt'];
+  return preferred.filter((key) => record[key] !== undefined).slice(0, 3).map((key) => `${key}: ${String(record[key])}`).join(' · ');
 }
 
-// ===========================================================================
-// Coming Soon View
-// ===========================================================================
-
-function ComingSoonView({ title, onNavigate, userEmail, onLogout }: { title: string; onNavigate: (v: View) => void; userEmail: string; onLogout: () => void }) {
-  return (
-    <div className="flex h-screen">
-      <PlatformSidebar onNavigate={onNavigate} active="" userEmail={userEmail} onLogout={onLogout} />
-      <div className="flex flex-1 items-center justify-center">
-        <Card className="max-w-md">
-          <CardHeader className="text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-              <Clock className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <CardTitle>{title}</CardTitle>
-            <CardDescription>Coming Soon</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-center text-sm text-muted-foreground">
-              This feature has not been designed yet. No ownership pass has been done —
-              same discipline applied to dashboard features as to backend modules.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-// ===========================================================================
-// Placeholder Tab (for API Keys, Monitoring, Logs, Settings)
-// ===========================================================================
-
-function PlaceholderTab({ title }: { title: string }) {
-  return (
-    <div className="flex items-center justify-center py-16">
-      <Card className="max-w-md">
-        <CardHeader className="text-center">
-          <Clock className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
-          <CardTitle className="text-base">{title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-center text-sm text-muted-foreground">
-            This section is part of the dashboard IA but not fully specified in Track A.
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ===========================================================================
-// Shared UI Components
-// ===========================================================================
-
-function StatCard({ label, value, icon: Icon }: { label: string; value: string | number; icon: React.ElementType }) {
-  return (
-    <Card>
-      <CardContent className="flex items-center gap-3 py-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10">
-          <Icon className="h-5 w-5 text-primary" />
-        </div>
-        <div>
-          <p className="text-2xl font-bold">{value}</p>
-          <p className="text-xs text-muted-foreground">{label}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const variant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-    operational: 'default',
-    degraded: 'secondary',
-    down: 'destructive',
-    not_configured: 'outline',
-  };
-  const label: Record<string, string> = {
-    operational: 'Operational',
-    degraded: 'Degraded',
-    down: 'Down',
-    not_configured: 'Not Configured',
-  };
-  return <Badge variant={variant[status] ?? 'outline'}>{label[status] ?? status}</Badge>;
-}
-
-function ModuleIcon({ moduleId }: { moduleId: string }) {
-  const icons: Record<string, React.ElementType> = {
-    auth: Shield,
-    organizations: Users,
-    configuration: Settings,
-    mail: Mail,
-    storage: HardDrive,
-    pay: CreditCard,
-    verify: Eye,
-    notifications: Bell,
-    sms: Smartphone,
-  };
-  const Icon = icons[moduleId] ?? Cpu;
-  return <Icon className="h-4 w-4 text-muted-foreground" />;
+function formatValue(key: string, value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'object') return JSON.stringify(value);
+  if (key.toLowerCase().includes('size') && typeof value === 'number') return formatBytes(value);
+  if (key.endsWith('At') && typeof value === 'string') return formatTimestamp(value);
+  return String(value);
 }

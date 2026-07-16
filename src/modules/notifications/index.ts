@@ -124,6 +124,8 @@ export interface ListNotificationsData {
     overallStatus: OverallStatus;
     createdAt: string;
   }[];
+  hasMore: boolean;
+  nextCursor: string | null;
 }
 
 export interface CancelNotificationData {
@@ -531,26 +533,22 @@ export async function getNotification(
 
 export async function listNotifications(
   workspaceId: string,
-  filters?: {
-    overallStatus?: OverallStatus;
-    dateFrom?: string;
-    dateTo?: string;
-  }
+  filters?: { overallStatus?: OverallStatus; dateFrom?: string; dateTo?: string },
+  pagination?: { limit?: number; cursor?: string }
 ): Promise<StandardResponse<ListNotificationsData>> {
   try {
     _requireWorkspaceId(workspaceId);
-
-    const records = store.listByWorkspace(workspaceId, filters);
+    const records = store.listByWorkspace(workspaceId, filters).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const start = pagination?.cursor ? Math.max(0, records.findIndex((r) => r.notificationId === pagination.cursor) + 1) : 0;
+    const limit = pagination?.limit && pagination.limit > 0 ? pagination.limit : records.length || 1;
+    const page = records.slice(start, start + limit);
+    const hasMore = start + page.length < records.length;
     return ok<ListNotificationsData>({
-      notifications: records.map((r) => ({
-        notificationId: r.notificationId,
-        overallStatus: r.overallStatus,
-        createdAt: r.createdAt,
-      })),
+      notifications: page.map((r) => ({ notificationId: r.notificationId, overallStatus: r.overallStatus, createdAt: r.createdAt })),
+      hasMore,
+      nextCursor: hasMore && page.length ? page[page.length - 1].notificationId : null,
     });
-  } catch (err) {
-    return _notifErrorToResponse(err);
-  }
+  } catch (err) { return _notifErrorToResponse(err); }
 }
 
 // ---------------------------------------------------------------------------

@@ -24,6 +24,9 @@ export const ConfigErrorCode = {
   // getFeatureFlag / setFeatureFlag
   FEATURE_FLAG_NOT_FOUND: 'FEATURE_FLAG_NOT_FOUND',
 
+  // workspace settings
+  SETTING_NOT_FOUND: 'SETTING_NOT_FOUND',
+
   // Catch-all
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   ENCRYPTION_ERROR: 'ENCRYPTION_ERROR',

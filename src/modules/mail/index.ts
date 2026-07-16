@@ -362,6 +362,40 @@ export async function getDeliveryStatus(
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// v1.3 listMessages (additive dashboard read API)
+// ---------------------------------------------------------------------------
+
+export interface ListMessagesData {
+  items: { messageId: string; type: MessageType; deliveryStatus: DeliveryStatus; createdAt: string; updatedAt: string }[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export async function listMessages(
+  workspaceId: string,
+  filters?: { type?: MessageType; deliveryStatus?: DeliveryStatus },
+  pagination?: { limit?: number; cursor?: string }
+): Promise<StandardResponse<ListMessagesData>> {
+  try {
+    if (!workspaceId) throw new MailError(MailErrorCode.MESSAGE_NOT_FOUND, 'workspaceId is required.');
+    let records = store.listByWorkspace(workspaceId);
+    if (filters?.type) records = records.filter((r) => r.type === filters.type);
+    if (filters?.deliveryStatus) records = records.filter((r) => r.status === filters.deliveryStatus);
+    records = records.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const start = pagination?.cursor ? Math.max(0, records.findIndex((r) => r.messageId === pagination.cursor) + 1) : 0;
+    const limit = pagination?.limit && pagination.limit > 0 ? pagination.limit : records.length || 1;
+    const page = records.slice(start, start + limit);
+    const hasMore = start + page.length < records.length;
+    return ok({
+      items: page.map((r) => ({ messageId: r.messageId, type: r.type, deliveryStatus: r.status, createdAt: r.createdAt, updatedAt: r.sentAt ?? r.createdAt })),
+      hasMore,
+      nextCursor: hasMore && page.length ? page[page.length - 1].messageId : null,
+    });
+  } catch (err) { return _mailErrorToResponse(err); }
+}
+
 // ---------------------------------------------------------------------------
 // Test-only outbox accessors (preserved from provisional stub)
 // ---------------------------------------------------------------------------
@@ -384,6 +418,7 @@ export const Mail = {
   sendInvitationEmail,
   sendEmail, // added in v1.2
   getDeliveryStatus,
+  listMessages,
 };
 
 export type MailModule = typeof Mail;
