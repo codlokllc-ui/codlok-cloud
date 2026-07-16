@@ -26,6 +26,24 @@ export async function resolveSupabaseCredentials(
   const url = urlR.success ? urlR.data.value : undefined;
   const anonKey = anonR.success ? anonR.data.value : undefined;
   const serviceRoleKey = serviceR.success ? serviceR.data.value : undefined;
-  if (!url || !anonKey || !serviceRoleKey) return null;
-  return { url, anonKey, serviceRoleKey };
+  if (url && anonKey && serviceRoleKey) {
+    return { url, anonKey, serviceRoleKey };
+  }
+
+  // Bootstrap the global Auth provider from hosting environment variables.
+  // Workspace-scoped Configuration values above remain the primary source.
+  if (ws === '__global__') {
+    const envUrl = process.env.SUPABASE_URL;
+    const envAnonKey = process.env.SUPABASE_ANON_KEY;
+    const envServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (envUrl && envAnonKey && envServiceRoleKey) {
+      return {
+        url: envUrl,
+        anonKey: envAnonKey,
+        serviceRoleKey: envServiceRoleKey,
+      };
+    }
+  }
+
+  return null;
 }
