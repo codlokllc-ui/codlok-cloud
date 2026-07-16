@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "vinext build && mkdir -p dist/standalone/dist && cp -r dist/client dist/server dist/standalone/dist/ && cp dist/standalone/dist/server/index.mjs dist/standalone/dist/server/index.js && cp dist/standalone/dist/server/ssr/index.mjs dist/standalone/dist/server/ssr/index.js && node -e \"const fs=require('node:fs'); fs.writeFileSync('dist/server/index.js', \\\"import '../standalone/server.js';\\\\n\\\"); fs.writeFileSync('dist/package.json', JSON.stringify({type:'module'}))\" && mkdir -p dist/.openai && cp .openai/hosting.json dist/.openai/hosting.json",
+    "build": "vinext build && cp dist/server/index.mjs dist/server/app.mjs && cp dist/server/ssr/index.mjs dist/server/ssr/index.js && node scripts/create-sites-entry.mjs && mkdir -p dist/.openai && cp .openai/hosting.json dist/.openai/hosting.json",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
     "db:push": "prisma db push",
