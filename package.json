@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "vinext build && cp dist/server/index.mjs dist/server/index.js && mkdir -p dist/.openai && cp .openai/hosting.json dist/.openai/hosting.json",
+    "build": "vinext build && cp dist/server/index.mjs dist/server/index.js && mkdir -p dist/.openai && cp .openai/hosting.json dist/.openai/hosting.json && node -e \"require('node:fs').writeFileSync('dist/package.json', JSON.stringify({type:'module'}))\"",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
     "db:push": "prisma db push",
