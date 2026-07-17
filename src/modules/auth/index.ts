@@ -40,6 +40,12 @@ import { Mail } from '@/modules/mail';
 import { resolveAdapter } from './adapters/factory';
 import { AuthErrorCode } from './errors';
 
+const PREVIEW_ACCESS_TOKEN = 'codlok-preview-bypass';
+const PREVIEW_USER_ID = 'codlok-preview-builder';
+function previewBypassEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_CODELOK_PREVIEW_BYPASS_AUTH === 'true';
+}
+
 // ---------------------------------------------------------------------------
 // Public data shapes (per §10 — exact)
 // ---------------------------------------------------------------------------
@@ -315,6 +321,9 @@ export async function verifySession(
   ctx?: WorkspaceContext
 ): Promise<StandardResponse<VerifySessionData>> {
   try {
+    if (previewBypassEnabled() && accessToken === PREVIEW_ACCESS_TOKEN) {
+      return ok<VerifySessionData>({ userId: PREVIEW_USER_ID, valid: true });
+    }
     if (!accessToken) {
       throw new ModuleError(AuthErrorCode.INVALID_SESSION, 'Access token is required.');
     }
@@ -465,6 +474,9 @@ export async function getUser(
   ctx?: WorkspaceContext
 ): Promise<StandardResponse<GetUserData>> {
   try {
+    if (previewBypassEnabled() && userId === PREVIEW_USER_ID) {
+      return ok<GetUserData>({ userId: PREVIEW_USER_ID, email: 'preview@codlok.local', emailVerified: true });
+    }
     if (!userId) {
       throw new ModuleError(AuthErrorCode.USER_NOT_FOUND, 'userId is required.');
     }
