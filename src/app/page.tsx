@@ -6,6 +6,7 @@ import {
   configStatusApi,
   credentialsApi,
   moduleDataApi,
+  observabilityApi,
   orgsApi,
   providerRegistryApi,
   secretsApi,
@@ -13,6 +14,8 @@ import {
   type ProviderMetadataDto,
   type ProductCredential,
   type ProviderStatusDto,
+  type AuditEventView,
+  type UsageSummary,
   type TeamMember,
   type Workspace,
 } from '@/lib/api';
@@ -338,10 +341,57 @@ function ProductView({ productId, tab, accessToken, userEmail, onLogout, onNavig
         {tab === 'health' && <HealthView workspaceId={productId} accessToken={accessToken} />}
         {tab === 'team' && <TeamView workspaceId={productId} accessToken={accessToken} />}
         {tab === 'api-keys' && <ApiKeysView workspaceId={productId} accessToken={accessToken} />}
-        {['monitoring', 'logs', 'settings'].includes(tab) && <ComingSoonCard title={tabs.find(([id]) => id === tab)?.[1] ?? tab} />}
+        {tab === 'monitoring' && <MonitoringView workspaceId={productId} accessToken={accessToken} />}
+        {tab === 'logs' && <AuditLogsView workspaceId={productId} accessToken={accessToken} />}
+        {tab === 'settings' && <ComingSoonCard title="Settings" />}
       </div>
     </PlatformShell>
   );
+}
+
+function MonitoringView({ workspaceId, accessToken }: { workspaceId: string; accessToken: string }) {
+  const [summary, setSummary] = useState<UsageSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    const result = await observabilityApi.summary(accessToken, workspaceId);
+    if (result.success && result.data) setSummary(result.data);
+    else setError(result.error?.message ?? 'Usage summary could not be loaded.');
+    setLoading(false);
+  }, [accessToken, workspaceId]);
+  useEffect(() => { void load(); }, [load]);
+  if (loading) return <CenteredMessage text="Loading usage…" />;
+  if (error || !summary) return <EmptyState title="Monitoring unavailable" description={error || 'No summary returned.'} />;
+  const max = Math.max(1, ...summary.hourly.map((bucket) => bucket.requests));
+  return <div className="space-y-6">
+    <div className="flex items-start justify-between"><div><h2 className="text-xl font-semibold">Usage Monitoring</h2><p className="text-sm text-muted-foreground">Gateway activity for this workspace. No request bodies or secrets are collected.</p></div><Button variant="outline" size="sm" onClick={() => void load()}><RotateCw className="mr-2 h-4 w-4" />Refresh</Button></div>
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5"><StatCard label="Last hour" value={summary.requestsLastHour} /><StatCard label="Last 24 hours" value={summary.requestsLast24Hours} /><StatCard label="Active credentials" value={summary.activeCredentialsLast24Hours} /><StatCard label="Denied" value={summary.deniedLast24Hours} /><StatCard label="Errors" value={summary.errorsLast24Hours} /></div>
+    <Card><CardHeader><CardTitle className="text-base">Requests by hour</CardTitle><CardDescription>Rolling 24-hour gateway request count.</CardDescription></CardHeader><CardContent><div className="flex h-56 items-end gap-1" aria-label="Hourly gateway requests">{summary.hourly.map((bucket) => <div key={bucket.hour} className="group relative flex h-full min-w-0 flex-1 items-end"><div className="w-full rounded-t bg-primary/80" style={{ height: `${Math.max(bucket.requests ? 4 : 1, (bucket.requests / max) * 100)}%` }} /><span className="pointer-events-none absolute bottom-full left-1/2 z-10 hidden -translate-x-1/2 whitespace-nowrap rounded bg-foreground px-2 py-1 text-xs text-background group-hover:block">{new Date(bucket.hour).toLocaleTimeString([], { hour: '2-digit' })}: {bucket.requests}</span></div>)}</div></CardContent></Card>
+  </div>;
+}
+
+function AuditLogsView({ workspaceId, accessToken }: { workspaceId: string; accessToken: string }) {
+  const [events, setEvents] = useState<AuditEventView[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const load = useCallback(async (before?: string, append = false) => {
+    setLoading(true); setError('');
+    const result = await observabilityApi.events(accessToken, workspaceId, before);
+    if (result.success && result.data) {
+      setEvents((current) => append ? [...current, ...result.data!.items] : result.data!.items);
+      setCursor(result.data.nextCursor); setHasMore(result.data.hasMore);
+    } else setError(result.error?.message ?? 'Audit events could not be loaded.');
+    setLoading(false);
+  }, [accessToken, workspaceId]);
+  useEffect(() => { void load(); }, [load]);
+  return <div className="space-y-6">
+    <div className="flex items-start justify-between"><div><h2 className="text-xl font-semibold">Gateway Audit Log</h2><p className="text-sm text-muted-foreground">Security outcomes and safe operational metadata only.</p></div><Button variant="outline" size="sm" onClick={() => void load()}><RotateCw className="mr-2 h-4 w-4" />Refresh</Button></div>
+    {error && <Card className="border-destructive"><CardContent className="p-4 text-sm text-destructive">{error}</CardContent></Card>}
+    {!loading && events.length === 0 && !error ? <EmptyState title="No gateway events yet" description="Events will appear after a product calls a protected Codlok API." /> : <Card><CardContent className="divide-y p-0">{events.map((event) => <div key={event.eventId} className="grid gap-2 p-4 md:grid-cols-[11rem_1fr_auto]"><div className="text-xs text-muted-foreground">{formatTimestamp(event.occurredAt)}</div><div><p className="font-mono text-sm">{event.eventType}</p><p className="mt-1 text-xs text-muted-foreground">Credential {event.credentialId ? `${event.credentialId.slice(0, 14)}…` : 'not recorded'}{Object.keys(event.metadata).length ? ` · ${Object.entries(event.metadata).map(([key, value]) => `${key}=${String(value)}`).join(' · ')}` : ''}</p></div><Badge variant={event.outcome === 'allowed' ? 'default' : event.outcome === 'denied' ? 'outline' : 'destructive'}>{event.outcome}</Badge></div>)}{loading && <p className="p-4 text-sm text-muted-foreground">Loading events…</p>}</CardContent>{hasMore && <CardFooter><Button variant="outline" disabled={loading || !cursor} onClick={() => cursor && void load(cursor, true)}>Load More</Button></CardFooter>}</Card>}
+  </div>;
 }
 
 const PRODUCT_SCOPES = ['auth:read', 'auth:write', 'mail:send', 'notifications:send', 'pay:read', 'pay:write', 'sms:send', 'storage:read', 'storage:write', 'verify:read', 'verify:write'];

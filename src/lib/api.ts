@@ -42,6 +42,24 @@ export interface ProductCredential {
   lastUsedAt: string | null;
 }
 
+export interface UsageSummary {
+  requestsLastHour: number;
+  requestsLast24Hours: number;
+  deniedLast24Hours: number;
+  errorsLast24Hours: number;
+  activeCredentialsLast24Hours: number;
+  hourly: { hour: string; requests: number }[];
+}
+
+export interface AuditEventView {
+  eventId: string;
+  credentialId: string | null;
+  eventType: string;
+  outcome: 'allowed' | 'denied' | 'error';
+  occurredAt: string;
+  metadata: Record<string, string | number | boolean | null>;
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helper
 // ---------------------------------------------------------------------------
@@ -302,6 +320,21 @@ export const credentialsApi = {
     return apiCall<{ success: boolean; data?: { apiKey: string; credential: ProductCredential }; error?: { code: string; message: string } }>(
       `/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/credentials/${encodeURIComponent(credentialId)}/rotate`,
       { method: 'POST', headers: authHeader(accessToken) }
+    );
+  },
+};
+
+export const observabilityApi = {
+  async summary(accessToken: string, workspaceId: string) {
+    return apiCall<{ success: boolean; data?: UsageSummary; error?: { code: string; message: string } }>(
+      `/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/observability/summary`,
+      { headers: authHeader(accessToken) }
+    );
+  },
+  async events(accessToken: string, workspaceId: string, before?: string, limit = 30) {
+    return apiCall<{ success: boolean; data?: { items: AuditEventView[]; nextCursor: string | null; hasMore: boolean }; error?: { code: string; message: string } }>(
+      withQuery(`/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/observability/events`, { before, limit }),
+      { headers: authHeader(accessToken) }
     );
   },
 };
