@@ -40,11 +40,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = 'codlok_auth';
 
-// The dashboard is currently in build-preview mode. Authentication remains
-// implemented, but the UI gate stays disabled until the platform is ready for
-// production qualification. Set NEXT_PUBLIC_CODELOK_AUTH_REQUIRED=true to
-// restore the login gate.
-const AUTH_REQUIRED = process.env.NEXT_PUBLIC_CODELOK_AUTH_REQUIRED === 'true';
+// Authentication remains required by default. A staging deployment can opt
+// into build-preview mode explicitly; production must never inherit a silent
+// bypass merely because a variable is missing.
+const AUTH_REQUIRED = process.env.NEXT_PUBLIC_CODELOK_PREVIEW_BYPASS_AUTH !== 'true';
 const PREVIEW_USER: AuthUser = {
   userId: 'codlok-preview-builder',
   email: 'preview@codlok.local',
