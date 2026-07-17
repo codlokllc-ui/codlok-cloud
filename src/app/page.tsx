@@ -147,7 +147,8 @@ export default function Home() {
           try {
             if (authMode === 'login') {
               const result = await login(email, password);
-              result.success ? toast.success('Signed in') : toast.error(result.error ?? 'Login failed');
+              if (result.success) toast.success('Signed in');
+              else toast.error(result.error ?? 'Login failed');
               return;
             }
             const result = await register(email, password);
@@ -391,7 +392,7 @@ function ModuleRecordsView({ workspaceId, accessToken, moduleId, onBack }: { wor
     setLoading(false);
   }, [accessToken, definition, moduleId, workspaceId]);
 
-  useEffect(() => { setRecords([]); setCursor(undefined); setSelected(null); void load(false); }, [moduleId, workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setRecords([]); setCursor(undefined); setSelected(null); void load(false); }, [moduleId, workspaceId]);
 
   if (!definition) return <EmptyState title="Unknown module" description={moduleId} />;
   const Icon = definition.icon;
@@ -481,7 +482,7 @@ function ProviderCard({ provider, workspaceId, accessToken }: { provider: Provid
         {fields.length === 0 ? <p className="text-sm text-muted-foreground">No Phase 3 configuration component exists for this provider.</p> : fields.map((field) => (
           <div key={field.key} className="space-y-2">
             <div className="flex justify-between"><Label htmlFor={`${provider.providerId}-${field.key}`}>{field.label}</Label>{configured[field.key] && <span className="text-xs text-emerald-600">Configured</span>}</div>
-            <div className="flex gap-2"><Input id={`${provider.providerId}-${field.key}`} type={field.secret ? 'password' : 'text'} placeholder={configured[field.key] ? 'Enter a replacement value' : field.placeholder} value={values[field.key] ?? ''} onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))} />{configured[field.key] && <Button variant="outline" onClick={async () => { const result = await secretsApi.delete(accessToken, workspaceId, field.key); result.success ? toast.success(`${field.label} removed`) : toast.error(result.error?.message ?? 'Delete failed'); await refresh(); }}>Delete</Button>}</div>
+            <div className="flex gap-2"><Input id={`${provider.providerId}-${field.key}`} type={field.secret ? 'password' : 'text'} placeholder={configured[field.key] ? 'Enter a replacement value' : field.placeholder} value={values[field.key] ?? ''} onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))} />{configured[field.key] && <Button variant="outline" onClick={async () => { const result = await secretsApi.delete(accessToken, workspaceId, field.key); if (result.success) toast.success(`${field.label} removed`); else toast.error(result.error?.message ?? 'Delete failed'); await refresh(); }}>Delete</Button>}</div>
           </div>
         ))}
       </CardContent>
