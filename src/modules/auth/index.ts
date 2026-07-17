@@ -43,7 +43,8 @@ import { AuthErrorCode } from './errors';
 const PREVIEW_ACCESS_TOKEN = 'codlok-preview-bypass';
 const PREVIEW_USER_ID = 'codlok-preview-builder';
 function previewBypassEnabled(): boolean {
-  return process.env.NEXT_PUBLIC_CODELOK_PREVIEW_BYPASS_AUTH === 'true';
+  return process.env.NODE_ENV !== 'production' &&
+    process.env.NEXT_PUBLIC_CODELOK_PREVIEW_BYPASS_AUTH === 'true';
 }
 
 // ---------------------------------------------------------------------------

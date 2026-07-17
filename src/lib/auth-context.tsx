@@ -43,7 +43,11 @@ const STORAGE_KEY = 'codlok_auth';
 // Authentication remains required by default. A staging deployment can opt
 // into build-preview mode explicitly; production must never inherit a silent
 // bypass merely because a variable is missing.
-const AUTH_REQUIRED = process.env.NEXT_PUBLIC_CODELOK_PREVIEW_BYPASS_AUTH !== 'true';
+// Preview bypass is a local-development convenience only. A deployed build
+// must always use the configured identity provider.
+const AUTH_REQUIRED =
+  process.env.NODE_ENV === 'production' ||
+  process.env.NEXT_PUBLIC_CODELOK_PREVIEW_BYPASS_AUTH !== 'true';
 const PREVIEW_USER: AuthUser = {
   userId: 'codlok-preview-builder',
   email: 'preview@codlok.local',
