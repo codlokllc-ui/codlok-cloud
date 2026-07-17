@@ -119,7 +119,7 @@ describe('BOUNDARY TESTS — internal symbols not on public surface', () => {
 
   test('SMS does NOT import Auth, Organizations, Notifications, or other modules', async () => {
     const fs = await import('fs');
-    const src = fs.readFileSync('/home/z/my-project/src/modules/sms/index.ts', 'utf-8');
+    const src = fs.readFileSync(`${process.cwd()}/src/modules/sms/index.ts`, 'utf-8');
     // Must import Configuration (allowed per §22).
     expect(src).toMatch(/@\/config/);
     // Must NOT import other Codlok modules.

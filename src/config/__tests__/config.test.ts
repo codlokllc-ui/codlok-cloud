@@ -390,7 +390,7 @@ describe('MANDATORY RULE 2 — Permission Enforcement is external', () => {
 
   test('Configuration does NOT import or call Organizations', async () => {
     const fs = await import('fs');
-    const src = fs.readFileSync('/home/z/my-project/src/config/index.ts', 'utf-8');
+    const src = fs.readFileSync(`${process.cwd()}/src/config/index.ts`, 'utf-8');
     // Must NOT import from Organizations module.
     expect(src).not.toMatch(/from ['"]@\/modules\/organizations/);
     // Must NOT call Organizations.checkPermission (in code, not comments).

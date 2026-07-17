@@ -1214,7 +1214,7 @@ describe('COMPLIANCE — §3.3 Module boundary (no reach-ins to Auth/Mail intern
     // Read the source file and check imports.
     const fs = await import('fs');
     const src = fs.readFileSync(
-      '/home/z/my-project/src/modules/organizations/index.ts',
+      `${process.cwd()}/src/modules/organizations/index.ts`,
       'utf-8'
     );
     // Must import Auth and Mail from their public index files.

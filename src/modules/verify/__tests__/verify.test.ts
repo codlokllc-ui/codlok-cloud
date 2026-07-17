@@ -688,7 +688,7 @@ describe('COMPLIANCE — No business-reference fields', () => {
 describe('COMPLIANCE — Module boundary', () => {
   test('Verify does NOT import Storage, Pay, or any other module', async () => {
     const fs = await import('fs');
-    const src = fs.readFileSync('/home/z/my-project/src/modules/verify/index.ts', 'utf-8');
+    const src = fs.readFileSync(`${process.cwd()}/src/modules/verify/index.ts`, 'utf-8');
     // Must import Configuration (allowed per §20 line 1019) — either static or dynamic.
     expect(src).toMatch(/@\/config/);
     // Must NOT import Storage, Pay, Auth, Organizations, Mail.

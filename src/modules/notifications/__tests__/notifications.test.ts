@@ -128,7 +128,7 @@ describe('BOUNDARY TESTS — internal symbols not on public surface', () => {
 
   test('Notifications does NOT import Auth, Organizations, or future Audit/Jobs', async () => {
     const fs = await import('fs');
-    const src = fs.readFileSync('/home/z/my-project/src/modules/notifications/index.ts', 'utf-8');
+    const src = fs.readFileSync(`${process.cwd()}/src/modules/notifications/index.ts`, 'utf-8');
     // Must import Mail (allowed per §21).
     expect(src).toMatch(/@\/modules\/mail/);
     // Must NOT import Auth, Organizations.
