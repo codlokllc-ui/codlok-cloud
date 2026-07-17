@@ -11,7 +11,7 @@
     "test": "bun test",
     "check": "npm run typecheck && npm run lint && npm test",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
-    "start:render": "node .next/standalone/server.js",
+    "start:render": "HOSTNAME=0.0.0.0 node .next/standalone/server.js",
     "lint": "eslint .",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
