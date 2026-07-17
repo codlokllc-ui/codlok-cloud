@@ -40,6 +40,19 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = 'codlok_auth';
 
+// The dashboard is currently in build-preview mode. Authentication remains
+// implemented, but the UI gate stays disabled until the platform is ready for
+// production qualification. Set NEXT_PUBLIC_CODELOK_AUTH_REQUIRED=true to
+// restore the login gate.
+const AUTH_REQUIRED = process.env.NEXT_PUBLIC_CODELOK_AUTH_REQUIRED === 'true';
+const PREVIEW_USER: AuthUser = {
+  userId: 'codlok-preview-builder',
+  email: 'preview@codlok.local',
+  accessToken: 'codlok-preview-bypass',
+  refreshToken: 'codlok-preview-bypass',
+  expiresAt: 4_102_444_800,
+};
+
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -47,6 +60,7 @@ const STORAGE_KEY = 'codlok_auth';
 export function AuthProvider({ children }: { children: ReactNode }) {
   // Lazy-initialize from localStorage — avoids setState-in-effect lint error.
   const [user, setUser] = useState<AuthUser | null>(() => {
+    if (!AUTH_REQUIRED) return PREVIEW_USER;
     if (typeof window === 'undefined') return null;
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
@@ -133,6 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    if (!AUTH_REQUIRED) return;
     if (user) {
       await fetch('/api/auth/logout', {
         method: 'POST',
