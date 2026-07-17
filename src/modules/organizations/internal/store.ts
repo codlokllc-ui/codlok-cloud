@@ -46,6 +46,15 @@ interface OrgStore {
   slugs: Set<string>;
 }
 
+export interface OrganizationRecords {
+  workspaces: Workspace[];
+  members: Member[];
+  roles: Role[];
+  invitations: Invitation[];
+  auditLog: AuditLogEntry[];
+}
+
+
 // ---------------------------------------------------------------------------
 // globalThis singleton
 // ---------------------------------------------------------------------------
@@ -84,6 +93,44 @@ export function _resetStoreForTesting(): void {
   const g = globalThis as Record<symbol, unknown>;
   g[STORE_KEY] = _createFreshStore();
 }
+
+export function exportOrganizationRecords(): OrganizationRecords {
+  const current = _getStore();
+  return {
+    workspaces: [...current.workspaces.values()],
+    members: [...current.members.values()],
+    roles: [...current.roles.values()],
+    invitations: [...current.invitations.values()],
+    auditLog: [...current.auditLog],
+  };
+}
+
+/** Rebuild the cache and all indexes from independently persisted records. */
+export function importOrganizationRecords(records: OrganizationRecords): void {
+  const next = _createFreshStore();
+  for (const workspace of records.workspaces) {
+    next.workspaces.set(workspace.id, workspace);
+    if (!workspace.deletedAt) next.slugs.add(workspace.slug.toLowerCase());
+  }
+  for (const role of records.roles) {
+    next.roles.set(role.id, role);
+    _ensure(next.rolesByWorkspace, role.workspaceId).add(role.id);
+  }
+  for (const member of records.members) {
+    next.members.set(member.id, member);
+    _ensure(next.membersByWorkspace, member.workspaceId).add(member.id);
+    _ensure(next.membersByUser, member.userId).add(member.id);
+  }
+  for (const invitation of records.invitations) {
+    next.invitations.set(invitation.id, invitation);
+    next.invitationsByToken.set(invitation.token, invitation.id);
+    _ensure(next.invitationsByWorkspace, invitation.workspaceId).add(invitation.id);
+  }
+  next.auditLog = [...records.auditLog];
+  const g = globalThis as Record<symbol, unknown>;
+  g[STORE_KEY] = next;
+}
+
 
 // ---------------------------------------------------------------------------
 // ID + token generators

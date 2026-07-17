@@ -76,6 +76,7 @@ import {
   requireMember as _requireMember,
 } from './internal/operations';
 import { PERMISSIONS, PERMISSION_BY_KEY } from './internal/permissions';
+import { withDurableOrganizationRecords } from './internal/repository';
 import type {
   Workspace,
   Member,
@@ -180,7 +181,7 @@ async function _wrap<T>(
   fn: () => Promise<T> | T
 ): Promise<StandardResponse<T>> {
   try {
-    const data = await fn();
+    const data = await withDurableOrganizationRecords(fn);
     return ok(data);
   } catch (err) {
     if (err instanceof Error && err.name === 'OrgError') {
