@@ -29,6 +29,19 @@ export interface TeamMember {
   emailVerified?: boolean;
 }
 
+export interface ProductCredential {
+  credentialId: string;
+  workspaceId: string;
+  name: string;
+  environment: 'development' | 'staging' | 'production';
+  scopes: string[];
+  keyPrefix: string;
+  createdAt: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helper
 // ---------------------------------------------------------------------------
@@ -262,6 +275,33 @@ export const settingsApi = {
     return apiCall<{ success: boolean; data?: { key: string; configured: false }; error?: { code: string; message: string } }>(
       withQuery(`/api/config/settings/${encodeURIComponent(key)}`, { workspaceId }),
       { method: 'DELETE', headers: authHeader(accessToken) }
+    );
+  },
+};
+
+export const credentialsApi = {
+  async list(accessToken: string, workspaceId: string) {
+    return apiCall<{ success: boolean; data?: ProductCredential[]; error?: { code: string; message: string } }>(
+      `/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
+      { headers: authHeader(accessToken) }
+    );
+  },
+  async create(accessToken: string, workspaceId: string, input: { name: string; environment: ProductCredential['environment']; scopes: string[] }) {
+    return apiCall<{ success: boolean; data?: { apiKey: string; credential: ProductCredential }; error?: { code: string; message: string } }>(
+      `/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
+      { method: 'POST', headers: authHeader(accessToken), body: JSON.stringify(input) }
+    );
+  },
+  async revoke(accessToken: string, workspaceId: string, credentialId: string) {
+    return apiCall<{ success: boolean; data?: ProductCredential; error?: { code: string; message: string } }>(
+      `/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/credentials/${encodeURIComponent(credentialId)}`,
+      { method: 'DELETE', headers: authHeader(accessToken) }
+    );
+  },
+  async rotate(accessToken: string, workspaceId: string, credentialId: string) {
+    return apiCall<{ success: boolean; data?: { apiKey: string; credential: ProductCredential }; error?: { code: string; message: string } }>(
+      `/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/credentials/${encodeURIComponent(credentialId)}/rotate`,
+      { method: 'POST', headers: authHeader(accessToken) }
     );
   },
 };

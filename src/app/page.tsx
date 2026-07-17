@@ -4,12 +4,14 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useAuth } from '@/lib/auth-context';
 import {
   configStatusApi,
+  credentialsApi,
   moduleDataApi,
   orgsApi,
   providerRegistryApi,
   secretsApi,
   settingsApi,
   type ProviderMetadataDto,
+  type ProductCredential,
   type ProviderStatusDto,
   type TeamMember,
   type Workspace,
@@ -29,6 +31,7 @@ import {
   Bell,
   BookOpen,
   CheckCircle2,
+  Copy,
   ChevronRight,
   Code2,
   Cpu,
@@ -46,6 +49,8 @@ import {
   Settings,
   Shield,
   Smartphone,
+  RotateCw,
+  Trash2,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -332,10 +337,48 @@ function ProductView({ productId, tab, accessToken, userEmail, onLogout, onNavig
         {tab === 'providers' && <ProvidersView workspaceId={productId} accessToken={accessToken} />}
         {tab === 'health' && <HealthView workspaceId={productId} accessToken={accessToken} />}
         {tab === 'team' && <TeamView workspaceId={productId} accessToken={accessToken} />}
-        {['api-keys', 'monitoring', 'logs', 'settings'].includes(tab) && <ComingSoonCard title={tabs.find(([id]) => id === tab)?.[1] ?? tab} />}
+        {tab === 'api-keys' && <ApiKeysView workspaceId={productId} accessToken={accessToken} />}
+        {['monitoring', 'logs', 'settings'].includes(tab) && <ComingSoonCard title={tabs.find(([id]) => id === tab)?.[1] ?? tab} />}
       </div>
     </PlatformShell>
   );
+}
+
+const PRODUCT_SCOPES = ['auth:read', 'auth:write', 'mail:send', 'notifications:send', 'pay:read', 'pay:write', 'sms:send', 'storage:read', 'storage:write', 'verify:read', 'verify:write'];
+
+function ApiKeysView({ workspaceId, accessToken }: { workspaceId: string; accessToken: string }) {
+  const [credentials, setCredentials] = useState<ProductCredential[]>([]);
+  const [name, setName] = useState('Development key');
+  const [environment, setEnvironment] = useState<ProductCredential['environment']>('development');
+  const [scopes, setScopes] = useState<string[]>(['auth:read']);
+  const [revealedKey, setRevealedKey] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const result = await credentialsApi.list(accessToken, workspaceId);
+    if (result.success) setCredentials(result.data ?? []);
+    else toast.error(result.error?.message ?? 'Could not load API keys');
+    setLoading(false);
+  }, [accessToken, workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const showNewKey = (apiKey: string) => {
+    setRevealedKey(apiKey);
+    toast.success('API key created. Copy it now; it will not be shown again.');
+  };
+
+  return <div className="space-y-6">
+    <div><h2 className="text-xl font-semibold">Product API Keys</h2><p className="text-sm text-muted-foreground">Workspace-scoped credentials for products and coding agents. Raw keys are shown once only.</p></div>
+    {revealedKey && <Card className="border-amber-500/50 bg-amber-50/40"><CardHeader><CardTitle className="text-base">Copy your new key now</CardTitle><CardDescription>This secret cannot be recovered after you leave this screen.</CardDescription></CardHeader><CardContent className="flex gap-2"><Input readOnly value={revealedKey} className="font-mono" /><Button variant="outline" onClick={async () => { await navigator.clipboard.writeText(revealedKey); toast.success('Copied'); }}><Copy className="mr-2 h-4 w-4" />Copy</Button></CardContent></Card>}
+    <Card><CardHeader><CardTitle className="text-base">Create credential</CardTitle><CardDescription>Choose the smallest set of permissions the product needs.</CardDescription></CardHeader><CardContent className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2"><div className="space-y-2"><Label>Name</Label><Input value={name} onChange={(event) => setName(event.target.value)} /></div><div className="space-y-2"><Label>Environment</Label><select className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={environment} onChange={(event) => setEnvironment(event.target.value as ProductCredential['environment'])}><option value="development">Development</option><option value="staging">Staging</option><option value="production">Production</option></select></div></div>
+      <div className="space-y-2"><Label>Scopes</Label><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{PRODUCT_SCOPES.map((scope) => <label key={scope} className="flex items-center gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={scopes.includes(scope)} onChange={(event) => setScopes((current) => event.target.checked ? [...current, scope] : current.filter((item) => item !== scope))} />{scope}</label>)}</div></div>
+    </CardContent><CardFooter><Button disabled={busy || !name.trim() || scopes.length === 0} onClick={async () => { setBusy(true); const result = await credentialsApi.create(accessToken, workspaceId, { name: name.trim(), environment, scopes }); if (result.success && result.data) { showNewKey(result.data.apiKey); await load(); } else toast.error(result.error?.message ?? 'Could not create API key'); setBusy(false); }}><Plus className="mr-2 h-4 w-4" />{busy ? 'Creating…' : 'Create API Key'}</Button></CardFooter></Card>
+    <Card><CardHeader><CardTitle className="text-base">Credentials</CardTitle></CardHeader><CardContent className="space-y-3">{loading ? <p className="text-sm text-muted-foreground">Loading credentials…</p> : credentials.length === 0 ? <p className="text-sm text-muted-foreground">No API keys yet.</p> : credentials.map((credential) => <div key={credential.credentialId} className="flex flex-col gap-3 rounded-lg border p-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex items-center gap-2"><p className="font-medium">{credential.name}</p><Badge variant={credential.revokedAt ? 'outline' : 'default'}>{credential.revokedAt ? 'Revoked' : credential.environment}</Badge></div><p className="mt-1 font-mono text-xs text-muted-foreground">{credential.keyPrefix}••••••••</p><p className="mt-1 text-xs text-muted-foreground">{credential.scopes.join(', ')} · Created {formatTimestamp(credential.createdAt)}</p></div>{!credential.revokedAt && <div className="flex gap-2"><Button size="sm" variant="outline" onClick={async () => { const result = await credentialsApi.rotate(accessToken, workspaceId, credential.credentialId); if (result.success && result.data) { showNewKey(result.data.apiKey); await load(); } else toast.error(result.error?.message ?? 'Could not rotate key'); }}><RotateCw className="mr-2 h-4 w-4" />Rotate</Button><Button size="sm" variant="destructive" onClick={async () => { const result = await credentialsApi.revoke(accessToken, workspaceId, credential.credentialId); if (result.success) { toast.success('API key revoked'); await load(); } else toast.error(result.error?.message ?? 'Could not revoke key'); }}><Trash2 className="mr-2 h-4 w-4" />Revoke</Button></div>}</div>)}</CardContent></Card>
+  </div>;
 }
 
 function useModuleStatuses(accessToken: string, workspaceId: string) {
