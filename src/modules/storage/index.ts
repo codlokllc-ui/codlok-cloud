@@ -85,11 +85,11 @@ import type {
 } from './internal/types';
 import { StorageError } from './internal/types';
 import {
-  store,
   newFileId,
   newUploadId,
   _resetStoreForTesting,
 } from './internal/store';
+import { storageRepository } from './internal/repository';
 import { resolveProvider, _setProviderForTesting } from './internal/factory';
 import {
   _deletePhysically,
@@ -245,7 +245,7 @@ export async function createUpload(
 ): Promise<StandardResponse<CreateUploadData>> {
   try {
     // Lazy cleanup of abandoned uploads (§18 line 795).
-    _cleanupAbandonedUploads();
+    await _cleanupAbandonedUploads();
 
     _requireWorkspaceId(workspaceId);
     _requireMimeType(mimeType);
@@ -300,7 +300,7 @@ export async function createUpload(
       updatedAt: now,
       uploadTtlExpiresAt: ttlExpiresAt,
     };
-    store.insert(record);
+    await storageRepository.insert(record);
 
     return ok<CreateUploadData>({
       uploadId,
@@ -324,7 +324,7 @@ export async function completeUpload(
 ): Promise<StandardResponse<CompleteUploadData>> {
   try {
     // Lazy cleanup of abandoned uploads.
-    _cleanupAbandonedUploads();
+    await _cleanupAbandonedUploads();
 
     _requireWorkspaceId(workspaceId);
     if (!uploadId) {
@@ -334,7 +334,7 @@ export async function completeUpload(
       );
     }
 
-    const record = store.getByUploadId(uploadId);
+    const record = await storageRepository.getByUploadId(uploadId);
     if (!record || record.workspaceId !== workspaceId) {
       throw new StorageError(
         StorageErrorCode.UPLOAD_NOT_FOUND,
@@ -367,7 +367,7 @@ export async function completeUpload(
 
     // Check abandonment TTL.
     if (record.uploadTtlExpiresAt && new Date(record.uploadTtlExpiresAt).getTime() < Date.now()) {
-      store.updateState(record.fileId, 'FAILED', { expiredAt: _now() });
+      await storageRepository.updateState(record.fileId, 'FAILED', { expiredAt: _now() }, ['PENDING', 'UPLOADING']);
       throw new StorageError(
         StorageErrorCode.UPLOAD_EXPIRED,
         'Upload has expired. Call createUpload() again.'
@@ -375,7 +375,10 @@ export async function completeUpload(
     }
 
     // Transition to UPLOADING.
-    store.updateState(record.fileId, 'UPLOADING');
+    const claimed = await storageRepository.updateState(record.fileId, 'UPLOADING', undefined, ['PENDING']);
+    if (!claimed) {
+      throw new StorageError(StorageErrorCode.UPLOAD_INCOMPLETE, 'Upload is already being completed. Retry shortly.');
+    }
 
     // Resolve provider (should still be configured — but check anyway).
     const resolved = await resolveProvider(workspaceId);
@@ -390,7 +393,7 @@ export async function completeUpload(
     const info = await resolved.provider.getObjectInfo(record.bucket, record.objectKey);
     if (!info.exists) {
       // Object not yet uploaded — transition back to PENDING (client can retry completeUpload).
-      store.updateState(record.fileId, 'PENDING');
+      await storageRepository.updateState(record.fileId, 'PENDING', undefined, ['UPLOADING']);
       throw new StorageError(
         StorageErrorCode.UPLOAD_INCOMPLETE,
         'Object not found at provider. Upload may not be complete yet.'
@@ -399,7 +402,7 @@ export async function completeUpload(
 
     // Verify size.
     if (info.sizeBytes !== undefined && info.sizeBytes !== record.expectedSizeBytes) {
-      store.updateState(record.fileId, 'FAILED');
+      await storageRepository.updateState(record.fileId, 'FAILED', undefined, ['UPLOADING']);
       throw new StorageError(
         StorageErrorCode.CHECKSUM_MISMATCH,
         `Size mismatch: expected ${record.expectedSizeBytes}, got ${info.sizeBytes}.`
@@ -409,7 +412,7 @@ export async function completeUpload(
     // Verify checksum (§18 Mandatory Rule 1).
     const actualChecksum = info.checksum ?? record.expectedChecksum; // mock provider always has checksum
     if (actualChecksum !== record.expectedChecksum) {
-      store.updateState(record.fileId, 'FAILED');
+      await storageRepository.updateState(record.fileId, 'FAILED', undefined, ['UPLOADING']);
       throw new StorageError(
         StorageErrorCode.CHECKSUM_MISMATCH,
         'Checksum mismatch: the uploaded object does not match the expected SHA-256.'
@@ -418,11 +421,11 @@ export async function completeUpload(
 
     // Transition to UPLOADED.
     const now = _now();
-    store.updateState(record.fileId, 'UPLOADED', {
+    await storageRepository.updateState(record.fileId, 'UPLOADED', {
       actualChecksum,
       actualSizeBytes: info.sizeBytes ?? record.expectedSizeBytes,
       uploadedAt: now,
-    });
+    }, ['UPLOADING']);
 
     return ok<CompleteUploadData>({
       fileId: record.fileId,
@@ -452,7 +455,7 @@ export async function getDownloadUrl(
       );
     }
 
-    const record = store.getByFileIdAndWorkspace(fileId, workspaceId);
+    const record = await storageRepository.getByFileIdAndWorkspace(fileId, workspaceId);
     if (!record || record.state === 'DELETED') {
       throw new StorageError(
         StorageErrorCode.FILE_NOT_FOUND,
@@ -506,7 +509,7 @@ export async function getFile(
       );
     }
 
-    const record = store.getByFileIdAndWorkspace(fileId, workspaceId);
+    const record = await storageRepository.getByFileIdAndWorkspace(fileId, workspaceId);
     if (!record || record.state === 'DELETED') {
       throw new StorageError(
         StorageErrorCode.FILE_NOT_FOUND,
@@ -544,7 +547,7 @@ export async function deleteFile(
       );
     }
 
-    const record = store.getByFileIdAndWorkspace(fileId, workspaceId);
+    const record = await storageRepository.getByFileIdAndWorkspace(fileId, workspaceId);
     if (!record) {
       throw new StorageError(
         StorageErrorCode.FILE_NOT_FOUND,
@@ -559,11 +562,12 @@ export async function deleteFile(
 
     // Logical delete: immediately transition to DELETED (§18 line 773).
     const now = _now();
-    store.updateState(record.fileId, 'DELETED', {
+    const deleted = await storageRepository.updateState(record.fileId, 'DELETED', {
       deletedAt: now,
       physicalDeletionStatus: 'pending',
       physicalDeletionRetryCount: 0,
-    });
+    }, ['PENDING', 'UPLOADING', 'UPLOADED', 'FAILED']);
+    if (!deleted) return ok<DeleteFileData>({ fileId, state: 'DELETED' });
 
     // Physical delete: async with retry (non-blocking).
     const resolved = await resolveProvider(workspaceId);
@@ -593,7 +597,7 @@ export async function fileExists(
       return ok<FileExistsData>({ exists: false });
     }
 
-    const record = store.getByFileIdAndWorkspace(fileId, workspaceId);
+    const record = await storageRepository.getByFileIdAndWorkspace(fileId, workspaceId);
     if (!record || record.state === 'DELETED') {
       return ok<FileExistsData>({ exists: false });
     }
@@ -646,7 +650,7 @@ export async function listFiles(
 ): Promise<StandardResponse<ListFilesData>> {
   try {
     _requireWorkspaceId(workspaceId);
-    let records = store.listByWorkspace(workspaceId);
+    let records = await storageRepository.listByWorkspace(workspaceId);
     if (filters?.state) records = records.filter((r) => r.state === filters.state);
     if (filters?.mimeType) records = records.filter((r) => r.mimeType === filters.mimeType);
     records = records.sort((a, b) => a.createdAt.localeCompare(b.createdAt));

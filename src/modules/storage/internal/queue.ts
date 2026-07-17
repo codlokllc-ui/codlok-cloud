@@ -11,7 +11,7 @@
  */
 
 import type { StorageProviderAdapter } from './types';
-import { store } from './store';
+import { storageRepository } from './repository';
 
 // ---------------------------------------------------------------------------
 // Retry configuration
@@ -67,15 +67,15 @@ async function _deleteInner(
   objectKey: string,
   provider: StorageProviderAdapter
 ): Promise<void> {
-  store.updatePhysicalDeletion(fileId, 'in_progress', 0);
+  await storageRepository.updatePhysicalDeletion(fileId, 'in_progress', 0);
 
   for (let attempt = 0; attempt <= MAX_DELETE_RETRIES; attempt++) {
     try {
       await provider.deleteObject(bucket, objectKey);
-      store.updatePhysicalDeletion(fileId, 'completed', attempt);
+      await storageRepository.updatePhysicalDeletion(fileId, 'completed', attempt);
       return;
     } catch {
-      store.updatePhysicalDeletion(fileId, 'in_progress', attempt + 1);
+      await storageRepository.updatePhysicalDeletion(fileId, 'in_progress', attempt + 1);
       if (attempt < MAX_DELETE_RETRIES) {
         const delay = _backoffMs(attempt);
         if (delay > 0) {
@@ -86,7 +86,7 @@ async function _deleteInner(
   }
 
   // Max retries exhausted.
-  store.updatePhysicalDeletion(fileId, 'failed', MAX_DELETE_RETRIES);
+  await storageRepository.updatePhysicalDeletion(fileId, 'failed', MAX_DELETE_RETRIES);
 }
 
 /**
@@ -111,13 +111,13 @@ export async function _flushDeletionQueueForTesting(): Promise<void> {
  * This is called lazily on every public function call — no background timer
  * needed. In production, a cron job would also call this periodically.
  */
-export function _cleanupAbandonedUploads(): number {
+export async function _cleanupAbandonedUploads(): Promise<number> {
   const now = new Date().toISOString();
-  const abandoned = store.findAbandoned(now);
+  const abandoned = await storageRepository.findAbandoned(now);
   for (const record of abandoned) {
-    store.updateState(record.fileId, 'FAILED', {
+    await storageRepository.updateState(record.fileId, 'FAILED', {
       expiredAt: now,
-    });
+    }, ['PENDING', 'UPLOADING']);
   }
   return abandoned.length;
 }
