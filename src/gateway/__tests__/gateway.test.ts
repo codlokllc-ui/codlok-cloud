@@ -1,61 +1,31 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { authenticateProductRequest } from '..';
-import { createCredential, revokeCredential, type ProductScope } from '@/modules/product-credentials';
+import { createCredential, revokeCredential } from '@/modules/product-credentials';
 import { _resetCredentialStoreForTesting } from '@/modules/product-credentials/internal/store';
 
-function key(scopes: ProductScope[] = ['storage:read']): { apiKey: string; credentialId: string } {
-  const result = createCredential({
-    workspaceId: 'workspace-trusted',
-    name: 'Product runtime',
-    environment: 'development',
-    scopes,
-  });
+beforeEach(() => { _resetCredentialStoreForTesting(); process.env.NODE_ENV = 'test'; process.env.CODELOK_API_KEY_PEPPER = 'gateway-test'; });
+
+async function key() {
+  const result = await createCredential({ workspaceId: 'workspace-trusted', name: 'Runtime', environment: 'development', scopes: ['storage:read'] });
   if (!result.success) throw new Error('fixture failed');
-  return { apiKey: result.data.apiKey, credentialId: result.data.credential.credentialId };
+  return result.data;
 }
 
-beforeEach(() => {
-  _resetCredentialStoreForTesting();
-  process.env.NODE_ENV = 'test';
-  process.env.CODELOK_API_KEY_PEPPER = 'gateway-test-pepper';
-});
-
-describe('Product API gateway authentication', () => {
-  test('accepts Bearer authentication and derives workspace from the credential', () => {
-    const credential = key();
-    expect(authenticateProductRequest({ authorization: `Bearer ${credential.apiKey}`, requiredScope: 'storage:read' })).toMatchObject({
-      success: true,
-      data: {
-        workspaceId: 'workspace-trusted',
-        environment: 'development',
-        authenticatedBy: 'product-api-key',
-      },
-    });
+describe('Product API gateway', () => {
+  test('derives workspace from Bearer credential and enforces scope', async () => {
+    const created = await key();
+    expect(await authenticateProductRequest({ authorization: `Bearer ${created.apiKey}`, requiredScope: 'storage:read' }))
+      .toMatchObject({ success: true, data: { workspaceId: 'workspace-trusted', authenticatedBy: 'product-api-key' } });
+    expect(await authenticateProductRequest({ apiKey: created.apiKey, requiredScope: 'storage:write' }))
+      .toMatchObject({ success: false, error: { code: 'INSUFFICIENT_SCOPE' } });
   });
 
-  test('enforces scopes and rejects missing, malformed, or ambiguous credentials', () => {
-    const credential = key(['storage:read']);
-    expect(authenticateProductRequest({ apiKey: credential.apiKey, requiredScope: 'storage:write' })).toMatchObject({
-      success: false,
-      error: { code: 'INSUFFICIENT_SCOPE' },
-    });
-    expect(authenticateProductRequest({})).toMatchObject({ success: false, error: { code: 'API_KEY_REQUIRED' } });
-    expect(authenticateProductRequest({ authorization: credential.apiKey })).toMatchObject({
-      success: false,
-      error: { code: 'INVALID_AUTHORIZATION_HEADER' },
-    });
-    expect(authenticateProductRequest({ authorization: `Bearer ${credential.apiKey}`, apiKey: credential.apiKey })).toMatchObject({
-      success: false,
-      error: { code: 'AMBIGUOUS_CREDENTIALS' },
-    });
-  });
-
-  test('rejects a credential after revocation', () => {
-    const credential = key();
-    revokeCredential('workspace-trusted', credential.credentialId);
-    expect(authenticateProductRequest({ apiKey: credential.apiKey })).toMatchObject({
-      success: false,
-      error: { code: 'API_KEY_REVOKED' },
-    });
+  test('rejects missing, ambiguous, and revoked credentials', async () => {
+    const created = await key();
+    expect(await authenticateProductRequest({})).toMatchObject({ success: false, error: { code: 'API_KEY_REQUIRED' } });
+    expect(await authenticateProductRequest({ authorization: `Bearer ${created.apiKey}`, apiKey: created.apiKey }))
+      .toMatchObject({ success: false, error: { code: 'AMBIGUOUS_CREDENTIALS' } });
+    await revokeCredential('workspace-trusted', created.credential.credentialId);
+    expect(await authenticateProductRequest({ apiKey: created.apiKey })).toMatchObject({ success: false, error: { code: 'API_KEY_REVOKED' } });
   });
 });

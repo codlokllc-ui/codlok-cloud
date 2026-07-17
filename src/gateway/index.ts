@@ -16,11 +16,11 @@ function bearerToken(authorization?: string | null): StandardResponse<string | n
   return ok(match[1]);
 }
 
-export function authenticateProductRequest(input: {
+export async function authenticateProductRequest(input: {
   authorization?: string | null;
   apiKey?: string | null;
   requiredScope?: ProductScope;
-}): StandardResponse<GatewayContext> {
+}): Promise<StandardResponse<GatewayContext>> {
   const bearer = bearerToken(input.authorization);
   if (!bearer.success) return bearer;
   if (bearer.data && input.apiKey) {
@@ -30,7 +30,7 @@ export function authenticateProductRequest(input: {
   const apiKey = bearer.data ?? input.apiKey?.trim();
   if (!apiKey) return fail('API_KEY_REQUIRED', 'A product API key is required.');
 
-  const authenticated = authenticateCredential(apiKey);
+  const authenticated = await authenticateCredential(apiKey);
   if (!authenticated.success) return authenticated;
   if (input.requiredScope && !authenticated.data.scopes.includes(input.requiredScope)) {
     return fail('INSUFFICIENT_SCOPE', 'The product credential does not have the required scope.');

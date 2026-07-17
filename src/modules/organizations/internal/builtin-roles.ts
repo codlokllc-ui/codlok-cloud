@@ -27,6 +27,8 @@ export const OWNER_PERMISSIONS: PermissionKey[] = [
   'invitations:read',
   'invitations:cancel',
   'audit:read',
+  'credentials:read',
+  'credentials:manage',
   'ownership:transfer',
 ];
 
@@ -43,6 +45,8 @@ export const ADMIN_PERMISSIONS: PermissionKey[] = [
   'invitations:read',
   'invitations:cancel',
   'audit:read',
+  'credentials:read',
+  'credentials:manage',
   // admins cannot transfer ownership or delete the workspace
 ];
 

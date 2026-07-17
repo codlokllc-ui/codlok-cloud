@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { fail, ok, type StandardResponse } from '@/shared';
-import { credentialStore } from './internal/store';
+import { getCredentialRepository } from './internal/repository';
 import { PRODUCT_SCOPES, type CredentialEnvironment, type CredentialRecord, type ProductScope } from './internal/types';
 
 export type { CredentialEnvironment, ProductScope } from './internal/types';
@@ -16,6 +16,8 @@ export interface CredentialMetadata {
   expiresAt: string | null;
   revokedAt: string | null;
   lastUsedAt: string | null;
+  createdBy: string;
+  rotatedFromCredentialId: string | null;
 }
 
 export interface AuthenticatedProductContext {
@@ -51,13 +53,15 @@ function metadata(record: CredentialRecord): CredentialMetadata {
   return { ...safe, scopes: [...safe.scopes] };
 }
 
-export function createCredential(input: {
+export async function createCredential(input: {
   workspaceId: string;
   name: string;
   environment: CredentialEnvironment;
   scopes: ProductScope[];
   expiresAt?: string | null;
-}): StandardResponse<{ apiKey: string; credential: CredentialMetadata }> {
+  createdBy?: string;
+  rotatedFromCredentialId?: string | null;
+}): Promise<StandardResponse<{ apiKey: string; credential: CredentialMetadata }>> {
   if (!input.workspaceId.trim()) return fail('WORKSPACE_REQUIRED', 'Workspace is required.');
   if (!input.name.trim()) return fail('NAME_REQUIRED', 'Credential name is required.');
   if (!ENVIRONMENTS.has(input.environment)) return fail('INVALID_ENVIRONMENT', 'Credential environment is invalid.');
@@ -84,21 +88,26 @@ export function createCredential(input: {
     scopes: [...input.scopes],
     keyPrefix: prefix.slice(0, 18),
     keyDigest: digest(secret),
+    createdBy: input.createdBy ?? 'system',
     createdAt: new Date().toISOString(),
     expiresAt,
     revokedAt: null,
     lastUsedAt: null,
+    rotatedFromCredentialId: input.rotatedFromCredentialId ?? null,
   };
-  credentialStore.insert(record);
+  try { await getCredentialRepository().insert(record); }
+  catch { return fail('CREDENTIAL_PERSISTENCE_FAILED', 'Credential could not be stored.'); }
   return ok({ apiKey: `${prefix}.${secret}`, credential: metadata(record) });
 }
 
-export function authenticateCredential(apiKey: string): StandardResponse<AuthenticatedProductContext> {
+export async function authenticateCredential(apiKey: string): Promise<StandardResponse<AuthenticatedProductContext>> {
   const match = KEY_PATTERN.exec(apiKey);
   if (!match) return fail('INVALID_API_KEY', 'API key is invalid.');
   const credentialId = match[2];
   const secret = match[3];
-  const record = credentialStore.get(credentialId);
+  let record: CredentialRecord | undefined;
+  try { record = await getCredentialRepository().get(credentialId); }
+  catch { return fail('CREDENTIAL_LOOKUP_FAILED', 'Credential could not be verified.'); }
   if (!record) return fail('INVALID_API_KEY', 'API key is invalid.');
   const actual = Buffer.from(digest(secret), 'hex');
   const expected = Buffer.from(record.keyDigest, 'hex');
@@ -110,6 +119,8 @@ export function authenticateCredential(apiKey: string): StandardResponse<Authent
     return fail('API_KEY_EXPIRED', 'API key has expired.');
   }
   record.lastUsedAt = new Date().toISOString();
+  try { await getCredentialRepository().update(record); }
+  catch { return fail('CREDENTIAL_UPDATE_FAILED', 'Credential usage could not be recorded.'); }
   return ok({
     credentialId: record.credentialId,
     workspaceId: record.workspaceId,
@@ -118,16 +129,36 @@ export function authenticateCredential(apiKey: string): StandardResponse<Authent
   });
 }
 
-export function revokeCredential(workspaceId: string, credentialId: string): StandardResponse<CredentialMetadata> {
-  const record = credentialStore.get(credentialId);
+export async function revokeCredential(workspaceId: string, credentialId: string): Promise<StandardResponse<CredentialMetadata>> {
+  let record: CredentialRecord | undefined;
+  try { record = await getCredentialRepository().get(credentialId); }
+  catch { return fail('CREDENTIAL_LOOKUP_FAILED', 'Credential could not be loaded.'); }
   if (!record || record.workspaceId !== workspaceId) return fail('CREDENTIAL_NOT_FOUND', 'Credential was not found.');
   if (!record.revokedAt) record.revokedAt = new Date().toISOString();
+  try { await getCredentialRepository().update(record); }
+  catch { return fail('CREDENTIAL_UPDATE_FAILED', 'Credential could not be revoked.'); }
   return ok(metadata(record));
 }
 
-export function listCredentials(workspaceId: string): StandardResponse<CredentialMetadata[]> {
+export async function listCredentials(workspaceId: string): Promise<StandardResponse<CredentialMetadata[]>> {
   if (!workspaceId.trim()) return fail('WORKSPACE_REQUIRED', 'Workspace is required.');
-  return ok(credentialStore.list(workspaceId).map(metadata));
+  try { return ok((await getCredentialRepository().list(workspaceId)).map(metadata)); }
+  catch { return fail('CREDENTIAL_LIST_FAILED', 'Credentials could not be listed.'); }
+}
+
+export async function rotateCredential(workspaceId: string, credentialId: string, actorUserId: string) {
+  const existing = await getCredentialRepository().get(credentialId);
+  if (!existing || existing.workspaceId !== workspaceId) return fail('CREDENTIAL_NOT_FOUND', 'Credential was not found.');
+  if (existing.revokedAt) return fail('API_KEY_REVOKED', 'API key has been revoked.');
+  const replacement = await createCredential({ workspaceId, name: existing.name, environment: existing.environment,
+    scopes: existing.scopes, expiresAt: existing.expiresAt, createdBy: actorUserId, rotatedFromCredentialId: credentialId });
+  if (!replacement.success) return replacement;
+  const revoked = await revokeCredential(workspaceId, credentialId);
+  if (!revoked.success) {
+    await revokeCredential(workspaceId, replacement.data.credential.credentialId);
+    return fail('ROTATION_FAILED', 'Credential rotation could not be completed.');
+  }
+  return replacement;
 }
 
 export const ProductCredentials = {
@@ -135,4 +166,5 @@ export const ProductCredentials = {
   authenticateCredential,
   revokeCredential,
   listCredentials,
+  rotateCredential,
 };

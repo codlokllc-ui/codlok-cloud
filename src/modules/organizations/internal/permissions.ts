@@ -96,6 +96,17 @@ export const PERMISSIONS: readonly Permission[] = [
     description: 'View the workspace audit log.',
   },
 
+  {
+    key: 'credentials:read',
+    label: 'View product credentials',
+    description: 'List product credential metadata. Raw keys are never recoverable.',
+  },
+  {
+    key: 'credentials:manage',
+    label: 'Manage product credentials',
+    description: 'Create, rotate, and revoke workspace product credentials.',
+  },
+
   // ── Ownership ────────────────────────────────────────────────────────
   {
     key: 'ownership:transfer',

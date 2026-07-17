@@ -10,7 +10,7 @@ export type WorkspaceAuthorization =
 export async function authorizeWorkspaceRequest(
   req: NextRequest,
   workspaceId: string,
-  options: { ownerOnly?: boolean } = {}
+  options: { ownerOnly?: boolean; requiredPermission?: string } = {}
 ): Promise<WorkspaceAuthorization> {
   const accessToken = getAccessToken(req);
   if (!accessToken) {
@@ -46,6 +46,24 @@ export async function authorizeWorkspaceRequest(
         ok: false,
         response: NextResponse.json(
           { success: false, error: { code: 'FORBIDDEN', message: 'Owner permission is required.' } },
+          { status: 403 }
+        ),
+      };
+    }
+  }
+
+  if (options.requiredPermission) {
+    const permission = await Organizations.checkPermission(
+      accessToken,
+      workspaceId,
+      session.data.userId,
+      options.requiredPermission
+    );
+    if (!permission.success || !permission.data.has) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { success: false, error: { code: 'FORBIDDEN', message: 'Required workspace permission is missing.' } },
           { status: 403 }
         ),
       };

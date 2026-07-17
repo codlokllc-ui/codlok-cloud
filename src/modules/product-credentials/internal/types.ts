@@ -35,8 +35,10 @@ export interface CredentialRecord {
   scopes: ProductScope[];
   keyPrefix: string;
   keyDigest: string;
+  createdBy: string;
   createdAt: string;
   expiresAt: string | null;
   revokedAt: string | null;
   lastUsedAt: string | null;
+  rotatedFromCredentialId: string | null;
 }
