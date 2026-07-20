@@ -26,7 +26,13 @@ export async function authorizeProductRequest(req: NextRequest, requiredScope: P
 }
 
 export function sendProductResponse<T>(result: StandardResponse<T>, context: GatewayContext): NextResponse {
-  const response = NextResponse.json(result, { status: result.success ? 200 : 400 });
+  const code = result.success ? '' : result.error.code;
+  const status = result.success ? 200
+    : ['FILE_NOT_FOUND', 'UPLOAD_NOT_FOUND', 'WORKSPACE_NOT_FOUND'].includes(code) ? 404
+      : ['FILE_NOT_UPLOADED', 'UPLOAD_INCOMPLETE', 'UPLOAD_EXPIRED'].includes(code) ? 409
+        : ['PROVIDER_NOT_CONFIGURED', 'INTERNAL_ERROR'].includes(code) ? 503
+          : code === 'FILE_TOO_LARGE' ? 413 : 400;
+  const response = NextResponse.json(result, { status });
   response.headers.set('X-Codlok-RateLimit-Limit', String(context.quota.limit));
   response.headers.set('X-Codlok-RateLimit-Remaining', String(context.quota.remaining));
   response.headers.set('X-Codlok-RateLimit-Reset', context.quota.resetAt);

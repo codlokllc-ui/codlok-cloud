@@ -18,6 +18,7 @@ import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import {
   Storage,
+  MAX_FILE_SIZE_BYTES,
   _resetStoreForTesting,
   _setProviderForTesting,
   _flushDeletionQueueForTesting,
@@ -189,6 +190,13 @@ describe('FUNCTIONAL — createUpload', () => {
     expect(r.success).toBe(false);
     if (r.success) return;
     expect(r.error.code).toBe(StorageErrorCode.PROVIDER_NOT_CONFIGURED);
+  });
+
+  test('FILE_TOO_LARGE rejects uploads above the platform limit', async () => {
+    const r = await Storage.createUpload(WS_1, GOOD_MIME, MAX_FILE_SIZE_BYTES + 1, GOOD_CHECKSUM);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.code).toBe(StorageErrorCode.FILE_TOO_LARGE);
   });
 
   test('Presigned URL is generated — bytes never pass through Codlok (§18 line 741)', async () => {

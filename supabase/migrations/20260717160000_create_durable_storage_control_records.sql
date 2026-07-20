@@ -30,14 +30,14 @@ create index if not exists codlok_storage_files_cleanup_idx
 create table if not exists public.codlok_data_plane_idempotency (
   workspace_id text not null references public.codlok_workspaces(id) on delete cascade,
   operation text not null,
-  idempotency_key text not null,
+  idempotency_key_hash text not null check (idempotency_key_hash ~ '^[a-f0-9]{64}$'),
   request_digest text not null,
   response_status integer,
   response_body jsonb,
   state text not null check (state in ('started','completed','failed')),
   created_at timestamptz not null default now(),
   expires_at timestamptz not null,
-  primary key (workspace_id, operation, idempotency_key)
+  primary key (workspace_id, operation, idempotency_key_hash)
 );
 create index if not exists codlok_data_plane_idempotency_expiry_idx
   on public.codlok_data_plane_idempotency(expires_at);

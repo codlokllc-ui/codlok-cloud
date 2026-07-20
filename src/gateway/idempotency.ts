@@ -26,8 +26,12 @@ function db() {
   return createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
+function keyHash(key: string): string {
+  return createHash('sha256').update(key).digest('hex');
+}
+
 function memoryId(workspaceId: string, operation: string, key: string): string {
-  return `${workspaceId}\u0000${operation}\u0000${key}`;
+  return `${workspaceId}\u0000${operation}\u0000${keyHash(key)}`;
 }
 
 export function validateIdempotencyKey(value: string | null): string | null {
@@ -56,15 +60,16 @@ export async function beginIdempotentOperation(input: {
     return { kind: 'conflict', reason: 'in_progress' };
   }
 
+  const idempotencyKeyHash = keyHash(input.key);
   const row = {
-    workspace_id: input.workspaceId, operation: input.operation, idempotency_key: input.key,
+    workspace_id: input.workspaceId, operation: input.operation, idempotency_key_hash: idempotencyKeyHash,
     request_digest: input.digest, state: 'started', expires_at: new Date(Date.now() + RETENTION_MS).toISOString(),
   };
   const inserted = await database.from('codlok_data_plane_idempotency').insert(row);
   if (!inserted.error) return { kind: 'acquired' };
   if (inserted.error.code !== '23505') throw new Error('IDEMPOTENCY_STATE_SAVE_FAILED');
   const { data, error } = await database.from('codlok_data_plane_idempotency').select('*')
-    .eq('workspace_id', input.workspaceId).eq('operation', input.operation).eq('idempotency_key', input.key).single();
+    .eq('workspace_id', input.workspaceId).eq('operation', input.operation).eq('idempotency_key_hash', idempotencyKeyHash).single();
   if (error || !data) throw new Error('IDEMPOTENCY_STATE_LOAD_FAILED');
   if (data.request_digest !== input.digest) return { kind: 'conflict', reason: 'different_request' };
   if (data.state === 'completed') return { kind: 'replay', response: { status: data.response_status, body: data.response_body } };
@@ -73,7 +78,7 @@ export async function beginIdempotentOperation(input: {
       state: 'started', request_digest: input.digest, response_status: null, response_body: null,
       expires_at: new Date(Date.now() + RETENTION_MS).toISOString(),
     }).eq('workspace_id', input.workspaceId).eq('operation', input.operation)
-      .eq('idempotency_key', input.key).eq('state', data.state).select('idempotency_key');
+      .eq('idempotency_key_hash', idempotencyKeyHash).eq('state', data.state).select('idempotency_key_hash');
     if (restarted.error) throw new Error('IDEMPOTENCY_STATE_SAVE_FAILED');
     return restarted.data?.length === 1 ? { kind: 'acquired' } : { kind: 'conflict', reason: 'in_progress' };
   }
@@ -92,10 +97,11 @@ export async function completeIdempotentOperation(input: {
     });
     return;
   }
+  const idempotencyKeyHash = keyHash(input.key);
   const { error } = await database.from('codlok_data_plane_idempotency').update({
     state: 'completed', response_status: input.response.status, response_body: input.response.body,
   }).eq('workspace_id', input.workspaceId).eq('operation', input.operation)
-    .eq('idempotency_key', input.key).eq('request_digest', input.digest).eq('state', 'started');
+    .eq('idempotency_key_hash', idempotencyKeyHash).eq('request_digest', input.digest).eq('state', 'started');
   if (error) throw new Error('IDEMPOTENCY_STATE_SAVE_FAILED');
 }
 
@@ -111,7 +117,8 @@ export async function failIdempotentOperation(input: {
     }
     return;
   }
+  const idempotencyKeyHash = keyHash(input.key);
   await database.from('codlok_data_plane_idempotency').update({ state: 'failed' })
     .eq('workspace_id', input.workspaceId).eq('operation', input.operation)
-    .eq('idempotency_key', input.key).eq('request_digest', input.digest).eq('state', 'started');
+    .eq('idempotency_key_hash', idempotencyKeyHash).eq('request_digest', input.digest).eq('state', 'started');
 }

@@ -113,6 +113,9 @@ const PRESIGNED_DOWNLOAD_TTL_SECONDS = 3600;
 /** 1 hour in milliseconds — abandonment TTL for PENDING/UPLOADING uploads. */
 const UPLOAD_ABANDONMENT_TTL_MS = 60 * 60 * 1000;
 
+/** Platform-wide ceiling. Provider adapters may enforce a lower limit. */
+export const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024;
+
 // ---------------------------------------------------------------------------
 // Allowed MIME types (basic validation — extend as needed)
 // ---------------------------------------------------------------------------
@@ -255,6 +258,12 @@ export async function createUpload(
       throw new StorageError(
         StorageErrorCode.INTERNAL_ERROR,
         'expectedSizeBytes must be a positive number.'
+      );
+    }
+    if (!Number.isSafeInteger(expectedSizeBytes) || expectedSizeBytes > MAX_FILE_SIZE_BYTES) {
+      throw new StorageError(
+        StorageErrorCode.FILE_TOO_LARGE,
+        `expectedSizeBytes must not exceed ${MAX_FILE_SIZE_BYTES} bytes.`
       );
     }
 
