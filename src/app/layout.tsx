@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Codlok Cloud Dashboard",
-  description: "Codlok Cloud — internal platform admin dashboard.",
+  title: "Codlok Cloud — Secure backend for every product",
+  description: "Codlok Cloud is the secure, agent-ready control plane for product infrastructure.",
 };
 
 export default function RootLayout({
