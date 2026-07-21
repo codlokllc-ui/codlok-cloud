@@ -58,6 +58,7 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
+import { CodlokMark } from '@/components/brand/codlok-mark';
 
 // The dashboard intentionally contains no product-business entities. It only
 // displays opaque infrastructure identifiers and data returned by module APIs.
@@ -211,12 +212,23 @@ function AuthView({ mode, busy, onToggle, onSubmit }: {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/20 p-4">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#101010] p-4 text-white">
       <Toaster richColors position="top-right" />
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground"><Shield className="h-6 w-6" /></div>
-          <CardTitle className="text-2xl">Codlok Cloud</CardTitle>
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_74%_45%,rgba(255,255,255,0.09),transparent_24rem)]" />
+      <div className="relative grid w-full max-w-5xl overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] shadow-2xl shadow-black/40 lg:grid-cols-[1.05fr_.95fr]">
+        <div className="hidden min-h-[590px] flex-col justify-between border-r border-white/10 p-10 lg:flex">
+          <div className="flex items-center gap-3 text-sm font-medium tracking-tight"><CodlokMark className="h-8 w-9" /><span>Codlok</span></div>
+          <div className="relative mx-auto flex w-full max-w-sm items-center justify-center py-12">
+            <div className="absolute h-64 w-64 rounded-full border border-white/10" />
+            <div className="absolute h-48 w-48 rounded-full border border-white/[0.07]" />
+            <CodlokMark animated className="relative h-40 w-44 text-white drop-shadow-[0_18px_30px_rgba(0,0,0,.45)]" title="Codlok rider in motion" />
+          </div>
+          <div><p className="text-lg font-medium tracking-tight">Secured transit for every product.</p><p className="mt-2 max-w-xs text-sm leading-6 text-white/55">Connect providers, policy, and product infrastructure through one accountable control plane.</p></div>
+        </div>
+        <Card className="w-full rounded-none border-0 bg-white p-2 text-foreground shadow-none">
+        <CardHeader className="pt-8 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#151515] text-white lg:hidden"><CodlokMark className="h-8 w-9" /></div>
+          <CardTitle className="text-2xl tracking-tight">{mode === 'login' ? 'Welcome back' : 'Create your workspace'}</CardTitle>
           <CardDescription>{mode === 'login' ? 'Sign in to manage your products and infrastructure.' : 'Create your Codlok Cloud account.'}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -228,6 +240,7 @@ function AuthView({ mode, busy, onToggle, onSubmit }: {
           <Button variant="link" onClick={onToggle}>{mode === 'login' ? 'Create an account' : 'Back to sign in'}</Button>
         </CardFooter>
       </Card>
+      </div>
     </div>
   );
 }
@@ -242,7 +255,7 @@ function PlatformShell({ children, active, onNavigate, userEmail, onLogout }: {
   return (
     <div className="flex h-screen">
       <aside className="flex w-64 flex-col border-r bg-muted/20">
-        <div className="flex h-14 items-center gap-2 border-b px-5"><Shield className="h-5 w-5 text-primary" /><span className="font-semibold">Codlok Cloud</span></div>
+        <div className="flex h-14 items-center gap-2 border-b px-5"><CodlokMark className="h-6 w-7 text-primary" /><span className="font-semibold">Codlok Cloud</span></div>
         <nav className="flex-1 space-y-1 p-3">
           <NavButton icon={Package} label="Products" active={active === 'products'} onClick={() => onNavigate({ type: 'products' })} />
           <NavButton icon={KeyRound} label="Secret Templates" active={active === 'secret-templates'} onClick={() => onNavigate({ type: 'secret-templates' })} />

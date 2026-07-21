@@ -120,3 +120,37 @@
     @apply bg-background text-foreground;
   }
 }
+
+.codlok-mark__wheel {
+  transform-box: view-box;
+}
+
+.codlok-mark__wheel--rear { transform-origin: 31px 82px; }
+.codlok-mark__wheel--front { transform-origin: 94px 69px; }
+
+.codlok-mark--animated .codlok-mark__bike {
+  animation: codlok-spring 1.75s cubic-bezier(.38, .02, .28, 1) infinite;
+}
+
+.codlok-mark--animated .codlok-mark__wheel {
+  animation: codlok-wheel-roll 1.05s linear infinite;
+}
+
+.codlok-mark--animated .codlok-mark__wheel--front {
+  animation-delay: -.18s;
+}
+
+@keyframes codlok-wheel-roll {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes codlok-spring {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  42% { transform: translateY(-4px) rotate(-1deg); }
+  62% { transform: translateY(1px) rotate(.45deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codlok-mark--animated .codlok-mark__bike,
+  .codlok-mark--animated .codlok-mark__wheel { animation: none; }
+}
