@@ -261,25 +261,69 @@ function AuthView({ mode, busy, onToggle, onSubmit }: {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/20 p-4">
+    <div className="relative min-h-screen overflow-hidden bg-[#080a10] p-4 text-white selection:bg-[#7c8cff]/35 sm:p-6">
+      <div className="pointer-events-none absolute inset-0 opacity-60 [background-image:linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] [background-size:42px_42px]" />
+      <div className="pointer-events-none absolute left-1/2 top-0 h-[30rem] w-[50rem] -translate-x-1/2 rounded-full bg-[#596cf6]/15 blur-[140px]" />
       <Toaster richColors position="top-right" />
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground"><Shield className="h-6 w-6" /></div>
-          <CardTitle className="text-2xl">Codlok Cloud</CardTitle>
-          <CardDescription>{mode === 'login' ? 'Sign in to manage your products and infrastructure.' : 'Create your Codlok Cloud account.'}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2"><Label htmlFor="email">Email</Label><Input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
-          <div className="space-y-2"><Label htmlFor="password">Password</Label><Input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></div>
-        </CardContent>
-        <CardFooter className="flex-col gap-2">
-          <Button className="w-full" disabled={busy || !email || password.length < 8} onClick={() => onSubmit(email, password)}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Register'}</Button>
-          <Button variant="link" onClick={onToggle}>{mode === 'login' ? 'Create an account' : 'Back to sign in'}</Button>
-        </CardFooter>
-      </Card>
+      <a href="/" className="relative z-10 mx-auto flex w-full max-w-6xl items-center gap-2 text-sm font-medium tracking-[-0.03em] text-white/80 transition hover:text-white"><ArrowLeft className="h-4 w-4" /> Back to Codlok</a>
+      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-6rem)] max-w-6xl items-center gap-10 py-10 lg:grid-cols-[1fr_420px] lg:gap-20">
+        <AuthTransitDiagram />
+        <Card className="w-full border-white/10 bg-[#11141d]/90 text-white shadow-2xl shadow-black/30 backdrop-blur-xl">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-[#aeb7ff]/25 bg-[#7c8cff]/15 text-[#cbd0ff]"><Shield className="h-6 w-6" /></div>
+            <CardTitle className="text-2xl text-white">Codlok Cloud</CardTitle>
+            <CardDescription className="text-white/55">{mode === 'login' ? 'Sign in to manage your products and infrastructure.' : 'Create your Codlok Cloud account.'}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2"><Label className="text-white/75" htmlFor="email">Email</Label><Input className="border-white/10 bg-white/[0.04] text-white placeholder:text-white/30" id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
+            <div className="space-y-2"><Label className="text-white/75" htmlFor="password">Password</Label><Input className="border-white/10 bg-white/[0.04] text-white placeholder:text-white/30" id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></div>
+          </CardContent>
+          <CardFooter className="flex-col gap-2">
+            <Button className="w-full bg-[#7c8cff] text-white hover:bg-[#929eff]" disabled={busy || !email || password.length < 8} onClick={() => onSubmit(email, password)}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Register'}</Button>
+            <Button className="text-white/65 hover:text-white" variant="link" onClick={onToggle}>{mode === 'login' ? 'Create an account' : 'Back to sign in'}</Button>
+          </CardFooter>
+        </Card>
+      </div>
     </div>
   );
+}
+
+function AuthTransitDiagram() {
+  return (
+    <section className="hidden lg:block" aria-label="How Codlok safely connects products and providers">
+      <div className="mb-8 max-w-xl">
+        <p className="text-sm font-medium text-[#aeb7ff]">SECURED TRANSIT</p>
+        <h1 className="mt-3 text-5xl font-medium leading-[0.98] tracking-[-0.065em] text-white">Your product connects.<br /><span className="text-white/50">Codlok keeps it controlled.</span></h1>
+        <p className="mt-5 max-w-lg text-base leading-7 text-white/50">One governed route between your backend and the providers behind it. Scope the access, switch providers when needed, and keep every action observable.</p>
+      </div>
+      <div className="auth-transit relative h-[380px] overflow-hidden rounded-2xl border border-white/10 bg-[#0e111a]/80 shadow-2xl shadow-black/20">
+        <div className="absolute inset-0 opacity-45 [background-image:linear-gradient(rgba(255,255,255,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.045)_1px,transparent_1px)] [background-size:32px_32px]" />
+        <svg className="absolute inset-0 h-full w-full" viewBox="0 0 680 380" fill="none" aria-hidden="true">
+          <defs><linearGradient id="transit-line" x1="80" y1="190" x2="610" y2="190" gradientUnits="userSpaceOnUse"><stop stopColor="#98A4FF" stopOpacity=".4" /><stop offset=".5" stopColor="#C7CCFF" /><stop offset="1" stopColor="#83E8D3" stopOpacity=".6" /></linearGradient></defs>
+          <path d="M118 190 C210 190 220 100 334 100 S455 80 555 80" stroke="url(#transit-line)" strokeWidth="2" />
+          <path d="M118 190 C210 190 220 100 334 100 S455 190 555 190" stroke="url(#transit-line)" strokeWidth="2" />
+          <path d="M118 190 C210 190 220 100 334 100 S455 300 555 300" stroke="url(#transit-line)" strokeWidth="2" />
+          <path d="M118 190 C210 190 220 280 334 280 S455 190 555 190" stroke="url(#transit-line)" strokeOpacity=".45" strokeWidth="2" />
+          {[[118,190],[334,100],[334,280],[555,80],[555,190],[555,300]].map(([cx,cy]) => <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="4" fill="#B8C0FF" />)}
+          <circle className="auth-transit-pulse auth-transit-pulse-one" cx="0" cy="0" r="5" fill="#fff" />
+          <circle className="auth-transit-pulse auth-transit-pulse-two" cx="0" cy="0" r="4" fill="#99F0DC" />
+          <circle className="auth-transit-pulse auth-transit-pulse-three" cx="0" cy="0" r="4" fill="#BFC6FF" />
+        </svg>
+        <TransitNode className="left-[8%] top-[calc(50%-34px)]" title="Your backend" detail="DROPPDAY" tone="indigo" />
+        <TransitNode className="left-[40%] top-[calc(26%-34px)]" title="Codlok" detail="Gateway" tone="bright" />
+        <TransitNode className="left-[40%] top-[calc(74%-34px)]" title="Policy" detail="Scopes + audit" tone="muted" />
+        <TransitNode className="right-[7%] top-[calc(21%-31px)]" title="Resend" detail="Mail" tone="green" small />
+        <TransitNode className="right-[7%] top-[calc(50%-31px)]" title="Supabase" detail="Auth + data" tone="green" small />
+        <TransitNode className="right-[7%] top-[calc(79%-31px)]" title="Stripe" detail="Payments" tone="green" small />
+        <div className="absolute bottom-5 left-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-[11px] text-white/55"><span className="h-1.5 w-1.5 rounded-full bg-[#8cedd7] shadow-[0_0_12px_#8cedd7]" /> Live routes · provider-neutral</div>
+      </div>
+    </section>
+  );
+}
+
+function TransitNode({ className, title, detail, tone, small = false }: { className: string; title: string; detail: string; tone: 'indigo' | 'bright' | 'muted' | 'green'; small?: boolean }) {
+  const toneClass = { indigo: 'border-[#9ba7ff]/30 bg-[#6978ee]/15', bright: 'border-[#d6daff]/45 bg-[#aeb7ff]/15 shadow-[0_0_42px_rgba(139,151,255,0.22)]', muted: 'border-white/15 bg-white/[0.05]', green: 'border-[#86ead5]/30 bg-[#72e2c8]/10' }[tone];
+  return <div className={`absolute z-10 ${className} ${small ? 'w-[118px] p-2.5' : 'w-[132px] p-3'} rounded-xl border ${toneClass} backdrop-blur-md`}><p className="text-xs font-medium text-white">{title}</p><p className="mt-0.5 text-[10px] text-white/45">{detail}</p></div>;
 }
 
 function PlatformShell({ children, active, onNavigate, userEmail, onLogout }: {
