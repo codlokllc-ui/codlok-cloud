@@ -37,17 +37,16 @@ provider credentials and provider-specific behavior remain inside Codlok.
 - Safe Monitoring and Logs summaries.
 - First protected Storage read operations.
 
-## Current stage: durable Storage data plane
+## Current stage: durable shared Storage jobs
 
-Before exposing Storage writes:
+Storage write contracts and durable control records are present. The current
+frozen implementation slice is `docs/DURABLE_SHARED_JOBS_V1.md`:
 
-- persist file/upload metadata outside application memory;
-- add product-operation idempotency keys;
-- make upload state transitions compare-and-set safe;
-- make logical deletion durable before physical deletion;
-- move physical deletion retries into durable jobs;
-- define operator replay and terminal failure behavior;
-- test deployment restart, duplicate request and cross-workspace isolation.
+- atomically enqueue physical deletion with logical deletion;
+- claim work through bounded, fair, expiring database leases;
+- retry with bounded backoff and terminal dead-letter state;
+- provide workspace-scoped monitoring and owner-only audited replay;
+- prove restart, duplicate-worker, retry, and cross-workspace behavior.
 
 After those gates pass, publish canonical Storage operations through
 `/api/data/v1/storage/*` with `storage:read` and `storage:write` scopes.
