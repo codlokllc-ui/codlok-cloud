@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import {
   configStatusApi,
@@ -69,6 +69,41 @@ type View =
   | { type: 'developer' }
   | { type: 'freeze-log' }
   | { type: 'coming-soon'; title: string };
+
+const DEFAULT_VIEW: View = { type: 'products' };
+
+/**
+ * Keep the selected dashboard location in the URL. This is deliberately UI-only:
+ * authorization continues to be checked by the product APIs after a refresh.
+ */
+function viewFromLocation(): View {
+  const params = new URLSearchParams(window.location.search);
+  const page = params.get('page');
+  if (page === 'product') {
+    const productId = params.get('product');
+    const tab = params.get('tab');
+    if (productId && tab) return { type: 'product', productId, tab };
+  }
+  if (page === 'secret-templates') return { type: 'secret-templates' };
+  if (page === 'developer') return { type: 'developer' };
+  if (page === 'freeze-log') return { type: 'freeze-log' };
+  return DEFAULT_VIEW;
+}
+
+function urlForView(view: View): string {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('page');
+  url.searchParams.delete('product');
+  url.searchParams.delete('tab');
+  if (view.type === 'product') {
+    url.searchParams.set('page', 'product');
+    url.searchParams.set('product', view.productId);
+    url.searchParams.set('tab', view.tab);
+  } else if (view.type !== 'products') {
+    url.searchParams.set('page', view.type);
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
 
 type ModuleId =
   | 'auth'
@@ -143,9 +178,23 @@ const PROVIDER_FIELDS: Record<string, ProviderField[]> = {
 
 export default function Home() {
   const { user, loading, login, register, autoVerifyEmail, logout } = useAuth();
-  const [view, setView] = useState<View>({ type: 'products' });
+  const [view, setView] = useState<View>(DEFAULT_VIEW);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [busy, setBusy] = useState(false);
+
+  // Run before paint so refreshing a product tab never visibly falls back to
+  // the Products home while React restores the saved location.
+  useLayoutEffect(() => {
+    setView(viewFromLocation());
+    const onPopState = () => setView(viewFromLocation());
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const navigate = useCallback((next: View) => {
+    setView(next);
+    window.history.pushState(null, '', urlForView(next));
+  }, []);
 
   if (loading) return <CenteredMessage text="Loading Codlok Cloud…" />;
 
@@ -180,7 +229,7 @@ export default function Home() {
     );
   }
 
-  const shared = { onNavigate: setView, userEmail: user.email, onLogout: logout };
+  const shared = { onNavigate: navigate, userEmail: user.email, onLogout: logout };
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Toaster richColors position="top-right" />
@@ -191,7 +240,7 @@ export default function Home() {
           accessToken={user.accessToken}
           productId={view.productId}
           tab={view.tab}
-          onTabChange={(tab) => setView({ type: 'product', productId: view.productId, tab })}
+          onTabChange={(tab) => navigate({ type: 'product', productId: view.productId, tab })}
         />
       )}
       {view.type === 'secret-templates' && <ComingSoonPage {...shared} title="Secret Templates" description="Requires a separately specified platform-owned secret-template backend. No fake template data is shown." />}
