@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Toaster } from '@/components/ui/sonner';
+import { LandingPage } from '@/components/marketing/landing-page';
 import { toast } from 'sonner';
 import {
   Activity,
@@ -176,7 +177,7 @@ const PROVIDER_FIELDS: Record<string, ProviderField[]> = {
   ],
 };
 
-export default function Home() {
+export function Dashboard() {
   const { user, loading, login, register, autoVerifyEmail, logout } = useAuth();
   const [view, setView] = useState<View>(DEFAULT_VIEW);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -713,4 +714,8 @@ function formatValue(key: string, value: unknown): string {
   if (key.toLowerCase().includes('size') && typeof value === 'number') return formatBytes(value);
   if (key.endsWith('At') && typeof value === 'string') return formatTimestamp(value);
   return String(value);
+}
+
+export default function Home() {
+  return <LandingPage />;
 }
