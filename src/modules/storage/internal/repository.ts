@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { jobStore } from '@/platform/jobs/store';
 import { store } from './store';
 import type { FileRecord, FileState } from './types';
 
@@ -68,6 +69,35 @@ export const storageRepository = {
     const db = database(); requireConfigured(db);
     if (!db) return store.getByFileIdAndWorkspace(fileId, workspaceId);
     return one(db.from('codlok_storage_files').select('*').eq('file_id', fileId).eq('workspace_id', workspaceId).maybeSingle());
+  },
+  async markDeletedAndEnqueue(record: FileRecord, deletedAt: string, jobId: string): Promise<boolean> {
+    const db = database(); requireConfigured(db);
+    if (!db) {
+      const current = store.getByFileIdAndWorkspace(record.fileId, record.workspaceId);
+      if (!current) return false;
+      if (current.state !== 'DELETED') {
+        store.updateState(record.fileId, 'DELETED', {
+          deletedAt, physicalDeletionStatus: 'pending', physicalDeletionRetryCount: 0,
+        });
+      }
+      if (current.physicalDeletionStatus !== 'completed') {
+        const now = new Date().toISOString();
+        jobStore.enqueue({
+          jobId, workspaceId: record.workspaceId, module: 'storage',
+          jobType: 'storage.physical_delete', deduplicationKey: `storage-delete:${record.fileId}`,
+          payload: { fileId: record.fileId, provider: record.provider, bucket: record.bucket, objectKey: record.objectKey },
+          status: 'queued', attemptCount: 0, maxAttempts: 5, runAfter: now,
+          replayCount: 0, createdAt: now, updatedAt: now,
+        });
+      }
+      return true;
+    }
+    const { data, error } = await db.rpc('codlok_delete_storage_file_and_enqueue', {
+      p_workspace_id: record.workspaceId, p_file_id: record.fileId,
+      p_deleted_at: deletedAt, p_job_id: jobId,
+    });
+    if (error) throw new Error('STORAGE_DELETE_ENQUEUE_FAILED');
+    return data === true;
   },
   async updateState(fileId: string, state: FileState, extra?: Partial<FileRecord>, expectedStates?: FileState[]): Promise<boolean> {
     const db = database(); requireConfigured(db);

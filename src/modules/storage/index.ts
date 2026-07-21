@@ -76,7 +76,9 @@
  * (Verify, Documents, etc.) has already decided that before calling Storage.
  */
 
+import { randomUUID } from 'crypto';
 import { StandardResponse, ok, fail } from '@/shared';
+import { resetJobStoreForTesting } from '@/platform/jobs/store';
 import { StorageErrorCode } from './internal/errors';
 import type {
   FileRecord,
@@ -87,18 +89,18 @@ import { StorageError } from './internal/types';
 import {
   newFileId,
   newUploadId,
-  _resetStoreForTesting,
+  _resetStoreForTesting as _resetStorageStoreForTesting,
 } from './internal/store';
 import { storageRepository } from './internal/repository';
 import { resolveProvider, _setProviderForTesting } from './internal/factory';
-import {
-  _deletePhysically,
-  _flushDeletionQueueForTesting,
-  _cleanupAbandonedUploads,
-} from './internal/queue';
+import { _flushDeletionQueueForTesting, _cleanupAbandonedUploads } from './internal/queue';
 
 // Re-export test helpers so tests can import from the public module.
-export { _resetStoreForTesting, _setProviderForTesting, _flushDeletionQueueForTesting };
+export function _resetStoreForTesting(): void {
+  _resetStorageStoreForTesting();
+  resetJobStoreForTesting();
+}
+export { _setProviderForTesting, _flushDeletionQueueForTesting };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -564,27 +566,8 @@ export async function deleteFile(
       );
     }
 
-    // If already deleted, idempotent success.
-    if (record.state === 'DELETED') {
-      return ok<DeleteFileData>({ fileId, state: 'DELETED' });
-    }
-
-    // Logical delete: immediately transition to DELETED (§18 line 773).
-    const now = _now();
-    const deleted = await storageRepository.updateState(record.fileId, 'DELETED', {
-      deletedAt: now,
-      physicalDeletionStatus: 'pending',
-      physicalDeletionRetryCount: 0,
-    }, ['PENDING', 'UPLOADING', 'UPLOADED', 'FAILED']);
-    if (!deleted) return ok<DeleteFileData>({ fileId, state: 'DELETED' });
-
-    // Physical delete: async with retry (non-blocking).
-    const resolved = await resolveProvider(workspaceId);
-    if (resolved) {
-      _deletePhysically(record.fileId, record.bucket, record.objectKey, resolved.provider).catch(() => {
-        // Errors are handled inside _deleteInner (updates physicalDeletionStatus).
-      });
-    }
+    const deleted = await storageRepository.markDeletedAndEnqueue(record, _now(), `job_${randomUUID()}`);
+    if (!deleted) throw new StorageError(StorageErrorCode.FILE_NOT_FOUND, 'File not found.');
 
     return ok<DeleteFileData>({ fileId, state: 'DELETED' });
   } catch (err) {
