@@ -79,7 +79,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     return null;
   });
-  const [loading, setLoading] = useState(false);
+  // The server cannot read localStorage.  Rendering the sign-in view before
+  // the browser has restored a valid saved session causes a visible
+  // dashboard → sign-in → dashboard flash on refresh.  Hold the neutral
+  // startup shell for the first client paint, then reveal the restored state.
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(false);
+  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await fetch('/api/auth/login', {
