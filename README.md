@@ -1,6 +1,6 @@
 # Codlok Cloud
 
-Codlok Cloud is a reusable, provider-neutral backend control plane for products built with coding agents.
+Codlok Cloud is a reusable, provider-neutral backend control plane for products.
 
 ## Local setup
 
