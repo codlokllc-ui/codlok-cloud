@@ -474,6 +474,22 @@ describe('MANDATORY RULE 3 — Encryption at rest', () => {
     if (!getR.success) return;
     expect(getR.data.value).toBe('val');
   });
+
+  test('Production fails closed when the master key is missing', () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousMasterKey = process.env.CODELOK_CONFIG_MASTER_KEY;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CODELOK_CONFIG_MASTER_KEY;
+    _resetMasterKeyForTesting();
+    try {
+      expect(() => encrypt('must-not-use-a-fallback')).toThrow('CONFIGURATION_MASTER_KEY_NOT_CONFIGURED');
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+      if (previousMasterKey === undefined) delete process.env.CODELOK_CONFIG_MASTER_KEY;
+      else process.env.CODELOK_CONFIG_MASTER_KEY = previousMasterKey;
+      _resetMasterKeyForTesting();
+    }
+  });
 });
 
 // ===========================================================================

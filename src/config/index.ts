@@ -71,11 +71,11 @@ import {
 } from './internal/types';
 import type {
   SecretRecord,
-  FeatureFlagRecord,
   SettingRecord,
   AuditLogEntry,
 } from './internal/types';
-import { store, _resetStoreForTesting } from './internal/store';
+import { _resetStoreForTesting } from './internal/store';
+import { configurationRepository as store } from './internal/repository';
 import { encrypt, decrypt, _resetMasterKeyForTesting } from './internal/crypto';
 
 // Re-export test helpers so tests can import from the public module.
@@ -185,11 +185,11 @@ export async function getSecret(
     _requireWorkspaceId(workspaceId);
     _requireKey(key);
 
-    const record = store.getSecret(workspaceId, key);
+    const record = await store.getSecret(workspaceId, key);
     const success = !!record;
 
     // Audit log (metadata only — never the value). Per §16 Mandatory Rule 1.
-    store.appendAudit({
+    await store.appendAudit({
       module,
       workspaceId,
       key,
@@ -266,17 +266,10 @@ export async function setSecret(
       );
     }
 
-    const version = store.nextVersion(workspaceId, key);
     const encrypted = encrypt(value);
-    const record: SecretRecord = {
-      encrypted,
-      version,
-      updatedBy: actorUserId,
-      updatedAt: _now(),
-    };
-    store.setSecret(workspaceId, key, record);
+    const record: SecretRecord = await store.setSecret(workspaceId, key, encrypted, actorUserId);
 
-    return ok<SetSecretData>({ key, configured: true, version });
+    return ok<SetSecretData>({ key, configured: true, version: record.version });
   } catch (err) {
     return _configErrorToResponse(err);
   }
@@ -295,7 +288,7 @@ export async function deleteSecret(
     _requireWorkspaceId(workspaceId);
     _requireKey(key);
 
-    const existing = store.deleteSecret(workspaceId, key);
+    const existing = await store.deleteSecret(workspaceId, key);
     if (!existing) {
       throw new ConfigError(
         ConfigErrorCode.SECRET_NOT_CONFIGURED,
@@ -334,7 +327,7 @@ export async function getProviderStatus(
       );
     }
 
-    const configuredKeys = new Set(store.listSecretKeys(workspaceId));
+    const configuredKeys = new Set(await store.listSecretKeys(workspaceId));
     const missingKeys = moduleDef.requiredKeys.filter((k) => !configuredKeys.has(k));
     const configured = missingKeys.length === 0;
 
@@ -359,8 +352,8 @@ export async function listConfiguredModules(
   try {
     _requireWorkspaceId(workspaceId);
 
+    const configuredKeys = new Set(await store.listSecretKeys(workspaceId));
     const modules = MODULE_CATALOG.map((m) => {
-      const configuredKeys = new Set(store.listSecretKeys(workspaceId));
       const missingKeys = m.requiredKeys.filter((k) => !configuredKeys.has(k));
       return {
         moduleId: m.moduleId,
@@ -385,7 +378,7 @@ export async function getSetting(
   try {
     _requireWorkspaceId(workspaceId);
     _requireKey(key);
-    const record = store.getSetting(workspaceId, key);
+    const record = await store.getSetting(workspaceId, key);
     if (!record) throw new ConfigError(ConfigErrorCode.SETTING_NOT_FOUND, `Setting '${key}' is not configured for this workspace.`);
     return ok({ key, value: record.value, version: record.version, updatedBy: record.updatedBy, updatedAt: record.updatedAt });
   } catch (err) { return _configErrorToResponse(err); }
@@ -402,10 +395,8 @@ export async function setSetting(
     _requireKey(key);
     if (!actorUserId) throw new ConfigError(ConfigErrorCode.INVALID_KEY, 'actorUserId is required.');
     if (typeof value !== 'string') throw new ConfigError(ConfigErrorCode.INVALID_KEY, 'value must be a string.');
-    const version = store.nextSettingVersion(workspaceId, key);
-    const record: SettingRecord = { key, value, version, updatedBy: actorUserId, updatedAt: _now() };
-    store.setSetting(workspaceId, key, record);
-    return ok({ key, value, version, updatedBy: actorUserId, updatedAt: record.updatedAt });
+    const record: SettingRecord = await store.setSetting(workspaceId, key, value, actorUserId);
+    return ok({ key, value, version: record.version, updatedBy: actorUserId, updatedAt: record.updatedAt });
   } catch (err) { return _configErrorToResponse(err); }
 }
 
@@ -417,7 +408,7 @@ export async function deleteSetting(
   try {
     _requireWorkspaceId(workspaceId);
     _requireKey(key);
-    const existing = store.deleteSetting(workspaceId, key);
+    const existing = await store.deleteSetting(workspaceId, key);
     if (!existing) throw new ConfigError(ConfigErrorCode.SETTING_NOT_FOUND, `Setting '${key}' is not configured for this workspace.`);
     return ok({ key, configured: false as const });
   } catch (err) { return _configErrorToResponse(err); }
@@ -435,7 +426,7 @@ export async function getFeatureFlag(
     _requireWorkspaceId(workspaceId);
     _requireKey(key);
 
-    const record = store.getFeatureFlag(workspaceId, key);
+    const record = await store.getFeatureFlag(workspaceId, key);
     if (!record) {
       throw new ConfigError(
         ConfigErrorCode.FEATURE_FLAG_NOT_FOUND,
@@ -471,15 +462,7 @@ export async function setFeatureFlag(
       );
     }
 
-    const version = store.nextFlagVersion(workspaceId, key);
-    const record: FeatureFlagRecord = {
-      key,
-      value,
-      version,
-      updatedBy: actorUserId,
-      updatedAt: _now(),
-    };
-    store.setFeatureFlag(workspaceId, key, record);
+    await store.setFeatureFlag(workspaceId, key, value, actorUserId);
 
     return ok<FeatureFlagData>({ key, value });
   } catch (err) {
@@ -497,7 +480,7 @@ export async function listAuditLog(
 ): Promise<StandardResponse<{ entries: AuditLogEntry[] }>> {
   try {
     _requireWorkspaceId(workspaceId);
-    return ok({ entries: store.listAudit(workspaceId, limit) });
+    return ok({ entries: await store.listAudit(workspaceId, limit) });
   } catch (err) {
     return _configErrorToResponse(err);
   }

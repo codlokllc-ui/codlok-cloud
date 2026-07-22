@@ -66,6 +66,10 @@ function _getMasterKey(): Buffer {
     return _cachedKey;
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('CONFIGURATION_MASTER_KEY_NOT_CONFIGURED');
+  }
+
   // Dev/test fallback: derive a deterministic key. This is NOT secure for
   // production — log a warning.
   if (process.env.NODE_ENV !== 'test') {

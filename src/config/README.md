@@ -10,6 +10,20 @@ Answers **"what is the current, correct provider credential/setting for this mod
 
 **Out of scope:** business logic, provider SDK client construction, connection testing. Each consuming module constructs its own client from the raw value `getSecret()` returns.
 
+## Durable authority
+
+Production Configuration records are stored in Supabase and scoped by
+`workspace_id`, deployment `environment`, record kind, and key. Secret values
+are AES-256-GCM ciphertext; settings and feature flags are structured JSON.
+Database-side upserts increment versions atomically, and secret reads append to
+the server-only audit table. Tests and local development retain the in-memory
+repository.
+
+Production fails closed without `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, or `CODELOK_CONFIG_MASTER_KEY`.
+`CODELOK_ENVIRONMENT` must classify a deployment as `development`, `staging`,
+or `production`.
+
 ## Public Interface (§16)
 
 Every function returns the StandardResponse shape (§3.6). No exceptions.
