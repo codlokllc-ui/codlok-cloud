@@ -62,6 +62,8 @@ export interface WorkspaceContext {
   workspaceId?: string;
 }
 
+export { codlokEnvironment, type CodlokEnvironment } from './environment';
+
 // ---------------------------------------------------------------------------
 // ModuleError — internal exception type
 //

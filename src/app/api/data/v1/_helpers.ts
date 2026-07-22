@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Gateway, type GatewayContext } from '@/gateway';
+import { Gateway, recordGatewayOperation, type GatewayContext } from '@/gateway';
 import type { ProductScope } from '@/modules/product-credentials';
 import type { StandardResponse } from '@/shared';
 import { fail } from '@/shared';
@@ -16,8 +16,8 @@ export const MAX_DATA_PLANE_JSON_BYTES = 16 * 1024;
 export async function authorizeProductRequest(req: NextRequest, requiredScope: ProductScope, operation: string): Promise<{ ok: true; context: GatewayContext } | { ok: false; response: NextResponse }> {
   const result = await Gateway.authenticateProductRequest({ authorization: req.headers.get('authorization'), apiKey: req.headers.get('x-codlok-key'), requiredScope, operation });
   if (!result.success) {
-    const status = result.error.code === 'API_KEY_REQUIRED' || result.error.code === 'INVALID_API_KEY' ? 401
-      : result.error.code === 'INSUFFICIENT_SCOPE' ? 403
+    const status = ['API_KEY_REQUIRED', 'INVALID_API_KEY', 'API_KEY_REVOKED', 'API_KEY_EXPIRED', 'API_KEY_INACTIVE'].includes(result.error.code) ? 401
+      : result.error.code === 'INSUFFICIENT_SCOPE' || result.error.code === 'API_KEY_WRONG_ENVIRONMENT' ? 403
         : result.error.code === 'RATE_LIMITED' ? 429
           : result.error.code === 'INVALID_AUTHORIZATION_HEADER' || result.error.code === 'AMBIGUOUS_CREDENTIALS' ? 400 : 503;
     return { ok: false, response: NextResponse.json(result, { status }) };
@@ -52,11 +52,13 @@ export async function runIdempotentMutation<T>(input: {
   const digest = requestDigest(input.operation, input.rawBody ?? '');
   let begun;
   try {
-    begun = await beginIdempotentOperation({ workspaceId: input.context.workspaceId, operation: input.operation, key, digest });
+    begun = await beginIdempotentOperation({ workspaceId: input.context.workspaceId, environment: input.context.environment, operation: input.operation, key, digest });
   } catch {
     return NextResponse.json(fail('IDEMPOTENCY_UNAVAILABLE', 'The request safety store is unavailable.'), { status: 503 });
   }
   if (begun.kind === 'replay') {
+    try { await recordGatewayOperation(input.context, input.operation, 'allowed', { result: 'replay' }); }
+    catch { return NextResponse.json(fail('GATEWAY_AUDIT_UNAVAILABLE', 'Gateway audit could not be recorded.'), { status: 503 }); }
     const replay = NextResponse.json(begun.response.body, { status: begun.response.status });
     replay.headers.set('X-Codlok-Idempotent-Replay', 'true');
     replay.headers.set('X-Codlok-RateLimit-Limit', String(input.context.quota.limit));
@@ -65,6 +67,8 @@ export async function runIdempotentMutation<T>(input: {
     return replay;
   }
   if (begun.kind === 'conflict') {
+    try { await recordGatewayOperation(input.context, input.operation, 'denied', { reason: begun.reason }); }
+    catch { return NextResponse.json(fail('GATEWAY_AUDIT_UNAVAILABLE', 'Gateway audit could not be recorded.'), { status: 503 }); }
     const message = begun.reason === 'different_request'
       ? 'This idempotency key was already used with a different request.'
       : 'A request with this idempotency key is still in progress.';
@@ -74,18 +78,29 @@ export async function runIdempotentMutation<T>(input: {
   try {
     result = await input.execute();
   } catch {
-    await failIdempotentOperation({ workspaceId: input.context.workspaceId, operation: input.operation, key, digest });
+    await failIdempotentOperation({ workspaceId: input.context.workspaceId, environment: input.context.environment, operation: input.operation, key, digest });
+    try { await recordGatewayOperation(input.context, input.operation, 'error', { reason: 'execution_failed' }); }
+    catch { return NextResponse.json(fail('GATEWAY_AUDIT_UNAVAILABLE', 'Gateway audit could not be recorded.'), { status: 503 }); }
     return NextResponse.json(fail('INTERNAL_ERROR', 'The operation could not be completed.'), { status: 500 });
   }
   const status = result.success ? (input.successStatus ?? 200) : 400;
   try {
+    await recordGatewayOperation(input.context, input.operation, result.success ? 'allowed' : 'denied', {
+      result: result.success ? 'success' : 'business_rejection',
+    });
+  } catch {
+    return NextResponse.json(fail('GATEWAY_AUDIT_UNAVAILABLE', 'Gateway audit could not be recorded.'), { status: 503 });
+  }
+  try {
     await completeIdempotentOperation({
-      workspaceId: input.context.workspaceId, operation: input.operation, key, digest,
+      workspaceId: input.context.workspaceId, environment: input.context.environment, operation: input.operation, key, digest,
       response: { status, body: result },
     });
   } catch {
     // The business operation may already have succeeded. Keep the record in
     // started state so an automatic retry cannot repeat an uncertain write.
+    try { await recordGatewayOperation(input.context, input.operation, 'error', { reason: 'idempotency_commit_failed' }); }
+    catch { /* The original outcome audit is already durable. */ }
     return NextResponse.json(fail('IDEMPOTENCY_COMMIT_FAILED', 'The operation result could not be safely committed for replay.'), { status: 503 });
   }
   const response = NextResponse.json(result, { status });

@@ -25,7 +25,7 @@ describe('data-plane idempotency', () => {
 
   test('replays a completed response without running twice', async () => {
     const key = unique();
-    const input = { workspaceId: 'ws-1', operation: 'storage.create', key, digest: requestDigest('storage.create', '{}') };
+    const input = { workspaceId: 'ws-1', environment: 'development' as const, operation: 'storage.create', key, digest: requestDigest('storage.create', '{}') };
     expect((await beginIdempotentOperation(input)).kind).toBe('acquired');
     await completeIdempotentOperation({ ...input, response: { status: 201, body: { success: true } } });
     const replay = await beginIdempotentOperation(input);
@@ -35,7 +35,7 @@ describe('data-plane idempotency', () => {
 
   test('rejects key reuse with a different request', async () => {
     const key = unique();
-    const base = { workspaceId: 'ws-1', operation: 'storage.create', key };
+    const base = { workspaceId: 'ws-1', environment: 'development' as const, operation: 'storage.create', key };
     expect((await beginIdempotentOperation({ ...base, digest: 'a' })).kind).toBe('acquired');
     const conflict = await beginIdempotentOperation({ ...base, digest: 'b' });
     expect(conflict).toEqual({ kind: 'conflict', reason: 'different_request' });
@@ -43,7 +43,7 @@ describe('data-plane idempotency', () => {
 
   test('prevents concurrent execution and permits retry after failure', async () => {
     const key = unique();
-    const input = { workspaceId: 'ws-1', operation: 'storage.delete', key, digest: 'same' };
+    const input = { workspaceId: 'ws-1', environment: 'development' as const, operation: 'storage.delete', key, digest: 'same' };
     expect((await beginIdempotentOperation(input)).kind).toBe('acquired');
     expect(await beginIdempotentOperation(input)).toEqual({ kind: 'conflict', reason: 'in_progress' });
     await failIdempotentOperation(input);
@@ -52,8 +52,14 @@ describe('data-plane idempotency', () => {
 
   test('same key is independent across workspaces and operations', async () => {
     const key = unique();
-    expect((await beginIdempotentOperation({ workspaceId: 'ws-a', operation: 'one', key, digest: 'x' })).kind).toBe('acquired');
-    expect((await beginIdempotentOperation({ workspaceId: 'ws-b', operation: 'one', key, digest: 'x' })).kind).toBe('acquired');
-    expect((await beginIdempotentOperation({ workspaceId: 'ws-a', operation: 'two', key, digest: 'x' })).kind).toBe('acquired');
+    expect((await beginIdempotentOperation({ workspaceId: 'ws-a', environment: 'development', operation: 'one', key, digest: 'x' })).kind).toBe('acquired');
+    expect((await beginIdempotentOperation({ workspaceId: 'ws-b', environment: 'development', operation: 'one', key, digest: 'x' })).kind).toBe('acquired');
+    expect((await beginIdempotentOperation({ workspaceId: 'ws-a', environment: 'development', operation: 'two', key, digest: 'x' })).kind).toBe('acquired');
+  });
+
+  test('same key is independent across environments', async () => {
+    const key = unique();
+    expect((await beginIdempotentOperation({ workspaceId: 'ws-a', environment: 'development', operation: 'one', key, digest: 'x' })).kind).toBe('acquired');
+    expect((await beginIdempotentOperation({ workspaceId: 'ws-a', environment: 'staging', operation: 'one', key, digest: 'x' })).kind).toBe('acquired');
   });
 });

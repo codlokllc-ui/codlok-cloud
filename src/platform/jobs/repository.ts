@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { jobStore } from './store';
 import type { PlatformJobRecord, PlatformJobStatus, PlatformJobView } from './types';
+import { codlokEnvironment } from '@/shared';
 
 function database(): SupabaseClient | null {
   if (process.env.NODE_ENV === 'test') return null;
@@ -99,6 +100,7 @@ export const platformJobRepository = {
     const { data, error } = await db.rpc('codlok_replay_platform_job', {
       p_job_id: input.jobId, p_workspace_id: input.workspaceId,
       p_actor_user_id: input.actorUserId, p_reason: input.reason,
+      p_environment: codlokEnvironment(),
     });
     if (error) throw new Error('PLATFORM_JOB_REPLAY_FAILED');
     return data === true;

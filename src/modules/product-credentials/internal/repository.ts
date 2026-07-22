@@ -7,6 +7,8 @@ export interface CredentialRepository {
   get(credentialId: string): Promise<CredentialRecord | undefined>;
   list(workspaceId: string): Promise<CredentialRecord[]>;
   update(record: CredentialRecord): Promise<void>;
+  touchActive(credentialId: string, usedAt: string): Promise<boolean>;
+  rotate(existingCredentialId: string, replacement: CredentialRecord, revokedAt: string): Promise<boolean>;
 }
 
 const memoryRepository: CredentialRepository = {
@@ -14,6 +16,19 @@ const memoryRepository: CredentialRepository = {
   async get(id) { return credentialStore.get(id); },
   async list(workspaceId) { return credentialStore.list(workspaceId); },
   async update(record) { credentialStore.insert(record); },
+  async touchActive(id, usedAt) {
+    const record = credentialStore.get(id);
+    if (!record || record.revokedAt || (record.expiresAt && Date.parse(record.expiresAt) <= Date.now())) return false;
+    credentialStore.insert({ ...record, lastUsedAt: usedAt });
+    return true;
+  },
+  async rotate(id, replacement, revokedAt) {
+    const existing = credentialStore.get(id);
+    if (!existing || existing.workspaceId !== replacement.workspaceId || existing.revokedAt) return false;
+    credentialStore.insert({ ...existing, revokedAt });
+    credentialStore.insert(replacement);
+    return true;
+  },
 };
 
 type Row = {
@@ -67,6 +82,23 @@ function supabaseRepository(): CredentialRepository | null {
     async update(record) {
       const { error } = await client.from('codlok_product_credentials').update(toRow(record)).eq('credential_id', record.credentialId).eq('workspace_id', record.workspaceId);
       if (error) throw new Error('CREDENTIAL_UPDATE_FAILED');
+    },
+    async touchActive(id, usedAt) {
+      const { data, error } = await client.rpc('codlok_touch_active_product_credential', {
+        p_credential_id: id,
+        p_used_at: usedAt,
+      });
+      if (error) throw new Error('CREDENTIAL_UPDATE_FAILED');
+      return data === true;
+    },
+    async rotate(id, replacement, revokedAt) {
+      const { data, error } = await client.rpc('codlok_rotate_product_credential', {
+        p_existing_credential_id: id,
+        p_replacement: toRow(replacement),
+        p_revoked_at: revokedAt,
+      });
+      if (error) throw new Error('ROTATION_FAILED');
+      return data === true;
     },
   };
 }

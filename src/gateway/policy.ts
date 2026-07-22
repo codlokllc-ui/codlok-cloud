@@ -15,6 +15,8 @@ const LIMITS: Record<CredentialEnvironment, number> = {
 };
 
 const TEST_STORE = Symbol.for('codlok.gateway.quota.test.v1');
+const TEST_AUDIT_STORE = Symbol.for('codlok.gateway.audit.test.v1');
+const TEST_AUDIT_FAILURE = Symbol.for('codlok.gateway.audit.failure.test.v1');
 function testWindows(): Map<string, { minute: number; count: number }> {
   const root = globalThis as Record<symbol, unknown>;
   if (!root[TEST_STORE]) root[TEST_STORE] = new Map();
@@ -36,9 +38,10 @@ export async function consumeQuota(input: {
   const limit = LIMITS[input.environment];
   if (process.env.NODE_ENV === 'test') {
     const minute = Math.floor(Date.now() / 60_000);
-    const existing = testWindows().get(input.credentialId);
+    const quotaKey = `${input.workspaceId}\u0000${input.environment}`;
+    const existing = testWindows().get(quotaKey);
     const count = existing?.minute === minute ? existing.count + 1 : 1;
-    testWindows().set(input.credentialId, { minute, count });
+    testWindows().set(quotaKey, { minute, count });
     return { allowed: count <= limit, limit, remaining: Math.max(0, limit - count), resetAt: new Date((minute + 1) * 60_000).toISOString() };
   }
 
@@ -47,6 +50,7 @@ export async function consumeQuota(input: {
   const { data, error } = await client.rpc('codlok_consume_gateway_quota', {
     p_credential_id: input.credentialId,
     p_workspace_id: input.workspaceId,
+    p_environment: input.environment,
     p_limit: limit,
   }).single();
   if (error || !data) throw new Error('QUOTA_CHECK_FAILED');
@@ -57,22 +61,44 @@ export async function consumeQuota(input: {
 export async function writeAuditEvent(input: {
   workspaceId: string;
   credentialId: string;
+  environment: CredentialEnvironment;
+  credentialEnvironment: CredentialEnvironment;
   eventType: string;
   outcome: 'allowed' | 'denied' | 'error';
   metadata?: Record<string, string | number | boolean | null>;
 }): Promise<void> {
-  if (process.env.NODE_ENV === 'test') return;
+  if (process.env.NODE_ENV === 'test') {
+    const root = globalThis as Record<symbol, unknown>;
+    if (root[TEST_AUDIT_FAILURE]) throw new Error('AUDIT_WRITE_FAILED');
+    const events = (root[TEST_AUDIT_STORE] ??= []) as typeof input[];
+    events.push(structuredClone(input));
+    return;
+  }
   const client = serverClient();
-  if (!client) return;
-  await client.from('codlok_audit_events').insert({
+  if (!client) throw new Error('AUDIT_STORE_NOT_CONFIGURED');
+  const { error } = await client.from('codlok_audit_events').insert({
     workspace_id: input.workspaceId,
     credential_id: input.credentialId,
+    environment: input.environment,
+    credential_environment: input.credentialEnvironment,
     event_type: input.eventType,
     outcome: input.outcome,
     metadata: input.metadata ?? {},
   });
+  if (error) throw new Error('AUDIT_WRITE_FAILED');
 }
 
 export function _resetGatewayPolicyForTesting(): void {
-  (globalThis as Record<symbol, unknown>)[TEST_STORE] = new Map();
+  const root = globalThis as Record<symbol, unknown>;
+  root[TEST_STORE] = new Map();
+  root[TEST_AUDIT_STORE] = [];
+  root[TEST_AUDIT_FAILURE] = false;
+}
+
+export function _setGatewayAuditFailureForTesting(fail: boolean): void {
+  (globalThis as Record<symbol, unknown>)[TEST_AUDIT_FAILURE] = fail;
+}
+
+export function _gatewayAuditEventsForTesting(): unknown[] {
+  return [...(((globalThis as Record<symbol, unknown>)[TEST_AUDIT_STORE] ?? []) as unknown[])];
 }

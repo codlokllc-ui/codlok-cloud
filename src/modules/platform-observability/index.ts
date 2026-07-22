@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { fail, ok, type StandardResponse } from '@/shared';
+import { codlokEnvironment, fail, ok, type StandardResponse } from '@/shared';
 
 export interface UsageBucket { hour: string; requests: number }
 export interface UsageSummary {
@@ -39,20 +39,22 @@ export async function getUsageSummary(workspaceId: string): Promise<StandardResp
   if (!db) return fail('OBSERVABILITY_NOT_CONFIGURED', 'Usage reporting is not configured.');
   const now = new Date();
   const since = new Date(now.getTime() - 24 * 60 * 60_000);
-  const [usage, audit] = await Promise.all([
-    db.from('codlok_gateway_usage_windows').select('credential_id,window_start,request_count')
-      .eq('workspace_id', workspaceId).gte('window_start', since.toISOString()),
+  const [usage, audit, credentials] = await Promise.all([
+    db.from('codlok_gateway_usage_windows').select('window_start,request_count')
+      .eq('workspace_id', workspaceId).eq('environment', codlokEnvironment()).gte('window_start', since.toISOString()),
     db.from('codlok_audit_events').select('outcome').eq('workspace_id', workspaceId)
+      .eq('environment', codlokEnvironment())
       .gte('occurred_at', since.toISOString()),
+    db.from('codlok_product_credentials').select('credential_id').eq('workspace_id', workspaceId)
+      .eq('environment', codlokEnvironment()).gte('last_used_at', since.toISOString()),
   ]);
-  if (usage.error || audit.error) return fail('OBSERVABILITY_QUERY_FAILED', 'Usage summary could not be loaded.');
+  if (usage.error || audit.error || credentials.error) return fail('OBSERVABILITY_QUERY_FAILED', 'Usage summary could not be loaded.');
   const hours = Array.from({ length: 24 }, (_, index) => {
     const date = new Date(now.getTime() - (23 - index) * 60 * 60_000);
     date.setUTCMinutes(0, 0, 0);
     return { hour: date.toISOString(), requests: 0 };
   });
   const byHour = new Map(hours.map((bucket) => [bucket.hour, bucket]));
-  const active = new Set<string>();
   let requestsLast24Hours = 0;
   let requestsLastHour = 0;
   for (const row of usage.data ?? []) {
@@ -63,13 +65,12 @@ export async function getUsageSummary(workspaceId: string): Promise<StandardResp
     if (bucket) bucket.requests += count;
     requestsLast24Hours += count;
     if (new Date(row.window_start).getTime() >= now.getTime() - 60 * 60_000) requestsLastHour += count;
-    active.add(row.credential_id);
   }
   return ok({
     requestsLastHour, requestsLast24Hours,
     deniedLast24Hours: (audit.data ?? []).filter((row) => row.outcome === 'denied').length,
     errorsLast24Hours: (audit.data ?? []).filter((row) => row.outcome === 'error').length,
-    activeCredentialsLast24Hours: active.size,
+    activeCredentialsLast24Hours: credentials.data?.length ?? 0,
     hourly: hours,
   });
 }
@@ -83,7 +84,8 @@ export async function listAuditEvents(
   const limit = Math.min(100, Math.max(1, options.limit ?? 30));
   let query = db.from('codlok_audit_events')
     .select('event_id,credential_id,event_type,outcome,metadata,occurred_at')
-    .eq('workspace_id', workspaceId).order('occurred_at', { ascending: false }).limit(limit + 1);
+    .eq('workspace_id', workspaceId).eq('environment', codlokEnvironment())
+    .order('occurred_at', { ascending: false }).limit(limit + 1);
   if (options.before) query = query.lt('occurred_at', options.before);
   const { data, error } = await query;
   if (error) return fail('OBSERVABILITY_QUERY_FAILED', 'Audit events could not be loaded.');

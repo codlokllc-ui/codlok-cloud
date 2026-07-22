@@ -1,15 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { store } from './store';
 import type { AuditLogEntry, FeatureFlagRecord, SecretRecord, SettingRecord } from './types';
+import { codlokEnvironment } from '@/shared';
 
 type ConfigKind = 'secret' | 'setting' | 'feature_flag';
-type Environment = 'development' | 'staging' | 'production';
-
-function environment(): Environment {
-  const configured = process.env.CODELOK_ENVIRONMENT;
-  if (configured === 'development' || configured === 'staging' || configured === 'production') return configured;
-  return process.env.NODE_ENV === 'production' ? 'production' : 'development';
-}
+const environment = codlokEnvironment;
 
 function database(): SupabaseClient | null {
   if (process.env.NODE_ENV === 'test') return null;

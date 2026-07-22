@@ -118,9 +118,11 @@ export async function authenticateCredential(apiKey: string): Promise<StandardRe
   if (record.expiresAt && Date.parse(record.expiresAt) <= Date.now()) {
     return fail('API_KEY_EXPIRED', 'API key has expired.');
   }
-  record.lastUsedAt = new Date().toISOString();
-  try { await getCredentialRepository().update(record); }
+  const usedAt = new Date().toISOString();
+  let active: boolean;
+  try { active = await getCredentialRepository().touchActive(record.credentialId, usedAt); }
   catch { return fail('CREDENTIAL_UPDATE_FAILED', 'Credential usage could not be recorded.'); }
+  if (!active) return fail('API_KEY_INACTIVE', 'API key is no longer active.');
   return ok({
     credentialId: record.credentialId,
     workspaceId: record.workspaceId,
@@ -147,18 +149,34 @@ export async function listCredentials(workspaceId: string): Promise<StandardResp
 }
 
 export async function rotateCredential(workspaceId: string, credentialId: string, actorUserId: string) {
-  const existing = await getCredentialRepository().get(credentialId);
+  let existing: CredentialRecord | undefined;
+  try { existing = await getCredentialRepository().get(credentialId); }
+  catch { return fail('CREDENTIAL_LOOKUP_FAILED', 'Credential could not be loaded.'); }
   if (!existing || existing.workspaceId !== workspaceId) return fail('CREDENTIAL_NOT_FOUND', 'Credential was not found.');
   if (existing.revokedAt) return fail('API_KEY_REVOKED', 'API key has been revoked.');
-  const replacement = await createCredential({ workspaceId, name: existing.name, environment: existing.environment,
-    scopes: existing.scopes, expiresAt: existing.expiresAt, createdBy: actorUserId, rotatedFromCredentialId: credentialId });
-  if (!replacement.success) return replacement;
-  const revoked = await revokeCredential(workspaceId, credentialId);
-  if (!revoked.success) {
-    await revokeCredential(workspaceId, replacement.data.credential.credentialId);
+  if (!productionPepperIsConfigured()) return fail('API_KEY_PEPPER_NOT_CONFIGURED', 'API key security is not configured for production.');
+  const replacementId = randomBytes(12).toString('hex');
+  const secret = randomBytes(32).toString('base64url');
+  const prefix = `cdlk_${environmentCode(existing.environment)}_${replacementId}`;
+  const now = new Date().toISOString();
+  const replacement: CredentialRecord = {
+    ...existing,
+    credentialId: replacementId,
+    keyPrefix: prefix.slice(0, 18),
+    keyDigest: digest(secret),
+    createdBy: actorUserId,
+    createdAt: now,
+    revokedAt: null,
+    lastUsedAt: null,
+    rotatedFromCredentialId: credentialId,
+  };
+  try {
+    const rotated = await getCredentialRepository().rotate(credentialId, replacement, now);
+    if (!rotated) return fail('ROTATION_FAILED', 'Credential rotation could not be completed.');
+  } catch {
     return fail('ROTATION_FAILED', 'Credential rotation could not be completed.');
   }
-  return replacement;
+  return ok({ apiKey: `${prefix}.${secret}`, credential: metadata(replacement) });
 }
 
 export const ProductCredentials = {

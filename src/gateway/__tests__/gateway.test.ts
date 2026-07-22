@@ -2,9 +2,19 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { authenticateProductRequest } from '..';
 import { createCredential, revokeCredential } from '@/modules/product-credentials';
 import { _resetCredentialStoreForTesting } from '@/modules/product-credentials/internal/store';
-import { _resetGatewayPolicyForTesting } from '../policy';
+import {
+  _gatewayAuditEventsForTesting,
+  _resetGatewayPolicyForTesting,
+  _setGatewayAuditFailureForTesting,
+} from '../policy';
 
-beforeEach(() => { _resetCredentialStoreForTesting(); _resetGatewayPolicyForTesting(); process.env.NODE_ENV = 'test'; process.env.CODELOK_API_KEY_PEPPER = 'gateway-test'; });
+beforeEach(() => {
+  _resetCredentialStoreForTesting();
+  _resetGatewayPolicyForTesting();
+  process.env.NODE_ENV = 'test';
+  process.env.CODELOK_ENVIRONMENT = 'development';
+  process.env.CODELOK_API_KEY_PEPPER = 'gateway-test';
+});
 
 async function key() {
   const result = await createCredential({ workspaceId: 'workspace-trusted', name: 'Runtime', environment: 'development', scopes: ['storage:read'] });
@@ -37,5 +47,20 @@ describe('Product API gateway', () => {
     }
     expect(await authenticateProductRequest({ apiKey: created.apiKey, operation: 'storage.list' }))
       .toMatchObject({ success: false, error: { code: 'RATE_LIMITED' } });
+  });
+
+  test('rejects a credential issued for another deployment environment', async () => {
+    const created = await createCredential({ workspaceId: 'workspace-trusted', name: 'Staging', environment: 'staging', scopes: ['storage:read'] });
+    if (!created.success) throw new Error('fixture failed');
+    expect(await authenticateProductRequest({ apiKey: created.data.apiKey, operation: 'storage.list' }))
+      .toMatchObject({ success: false, error: { code: 'API_KEY_WRONG_ENVIRONMENT' } });
+    expect(_gatewayAuditEventsForTesting()).toHaveLength(1);
+  });
+
+  test('fails closed when required gateway audit cannot be persisted', async () => {
+    const created = await key();
+    _setGatewayAuditFailureForTesting(true);
+    expect(await authenticateProductRequest({ apiKey: created.apiKey, operation: 'storage.list' }))
+      .toMatchObject({ success: false, error: { code: 'GATEWAY_AUDIT_UNAVAILABLE' } });
   });
 });
