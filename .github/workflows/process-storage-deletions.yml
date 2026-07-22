@@ -1,0 +1,50 @@
+name: Process durable Storage deletions
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codlok-storage-deletion-worker
+  cancel-in-progress: false
+
+jobs:
+  process-storage-deletions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Process due deletion jobs
+        env:
+          CODLOK_JOB_RUNNER_SECRET: ${{ secrets.CODLOK_JOB_RUNNER_SECRET }}
+          WORKER_URL: https://codlok-cloud-staging.onrender.com/api/internal/jobs/storage-deletions?limit=25
+        run: |
+          set -euo pipefail
+          if [ -z "${CODLOK_JOB_RUNNER_SECRET}" ]; then
+            echo "::error::CODLOK_JOB_RUNNER_SECRET is not configured"
+            exit 1
+          fi
+
+          response="$(curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --max-time 110 \
+            --retry 1 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            --request POST \
+            --header "Authorization: Bearer ${CODLOK_JOB_RUNNER_SECRET}" \
+            "${WORKER_URL}")"
+
+          printf '%s\n' "${response}"
+          printf '%s' "${response}" | jq -e '
+            .success == true and
+            (.data.claimed | type == "number") and
+            (.data.completed | type == "number") and
+            (.data.retried | type == "number") and
+            (.data.deadLettered | type == "number") and
+            (.data.leaseConflicts | type == "number")
+          ' >/dev/null
