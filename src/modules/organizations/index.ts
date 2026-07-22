@@ -76,7 +76,10 @@ import {
   requireMember as _requireMember,
 } from './internal/operations';
 import { PERMISSIONS, PERMISSION_BY_KEY } from './internal/permissions';
-import { withDurableOrganizationRecords } from './internal/repository';
+import {
+  withDurableOrganizationRecords,
+  type OrganizationScope,
+} from './internal/repository';
 import type {
   Workspace,
   Member,
@@ -178,10 +181,11 @@ async function _resolveIdentity(
  * This is the single boundary that enforces §3.6 at every public function.
  */
 async function _wrap<T>(
+  scope: OrganizationScope,
   fn: () => Promise<T> | T
 ): Promise<StandardResponse<T>> {
   try {
-    const data = await withDurableOrganizationRecords(fn);
+    const data = await withDurableOrganizationRecords(scope, fn);
     return ok(data);
   } catch (err) {
     if (err instanceof Error && err.name === 'OrgError') {
@@ -205,7 +209,7 @@ export async function createWorkspace(
   input: CreateWorkspaceInput,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Workspace>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'create' }, async () => {
     const caller = await _resolveCaller(accessToken);
     return _createWorkspace(caller, input);
   });
@@ -217,7 +221,7 @@ export async function updateWorkspace(
   patch: UpdateWorkspaceInput,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Workspace>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     return _updateWorkspace(caller, workspaceId, patch);
   });
@@ -228,7 +232,7 @@ export async function deleteWorkspace(
   workspaceId: WorkspaceId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Record<string, never>>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     _deleteWorkspace(caller, workspaceId);
     return {};
@@ -240,7 +244,7 @@ export async function getWorkspace(
   workspaceId: WorkspaceId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Workspace>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     return _getWorkspace(caller, workspaceId);
   });
@@ -250,8 +254,14 @@ export async function listWorkspaces(
   accessToken: string,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Workspace[]>> {
-  return _wrap(async () => {
-    const caller = await _resolveCaller(accessToken);
+  let caller: Caller;
+  try {
+    caller = await _resolveCaller(accessToken);
+  } catch (err) {
+    if (err instanceof OrgError) return fail(err.code, err.message);
+    return fail(OrgErrorCode.INTERNAL_ERROR, 'An internal error occurred.');
+  }
+  return _wrap({ kind: 'user', userId: caller.userId }, () => {
     return _listWorkspaces(caller);
   });
 }
@@ -267,7 +277,7 @@ export async function addMember(
   roleId: RoleId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Member>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     return _addMember(caller, workspaceId, targetUserId, roleId);
   });
@@ -279,7 +289,7 @@ export async function removeMember(
   targetUserId: string,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Record<string, never>>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     _removeMember(caller, workspaceId, targetUserId);
     return {};
@@ -293,7 +303,7 @@ export async function transferOwnership(
   confirm: boolean,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Record<string, never>>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     _transferOwnership(caller, workspaceId, targetUserId, confirm);
     return {};
@@ -305,7 +315,7 @@ export async function leaveWorkspace(
   workspaceId: WorkspaceId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Record<string, never>>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     _leaveWorkspace(caller, workspaceId);
     return {};
@@ -317,7 +327,7 @@ export async function listMembers(
   workspaceId: WorkspaceId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Member[]>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     return _listMembers(caller, workspaceId);
   });
@@ -333,7 +343,7 @@ export async function listMembersWithIdentity(
   workspaceId: WorkspaceId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<MemberWithIdentity[]>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     const members = _listMembers(caller, workspaceId);
     const out: MemberWithIdentity[] = [];
@@ -365,7 +375,9 @@ export async function checkAccess(
   // verify whether a user belongs to a workspace before performing an
   // operation. The caller module is responsible for having already
   // authenticated the user via Auth.
-  return _wrap(() => _checkAccess(userId, workspaceId));
+  return _wrap({ kind: 'workspace', workspaceId }, () =>
+    _checkAccess(userId, workspaceId)
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -378,7 +390,7 @@ export async function createRole(
   input: CreateRoleInput,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Role>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     return _createRole(caller, workspaceId, input);
   });
@@ -391,7 +403,7 @@ export async function updateRole(
   patch: UpdateRoleInput,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Role>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     return _updateRole(caller, workspaceId, roleId, patch);
   });
@@ -403,7 +415,7 @@ export async function deleteRole(
   roleId: RoleId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Record<string, never>>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     _deleteRole(caller, workspaceId, roleId);
     return {};
@@ -417,7 +429,7 @@ export async function assignRole(
   roleId: RoleId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Record<string, never>>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     _assignRole(caller, workspaceId, targetUserId, roleId);
     return {};
@@ -430,7 +442,7 @@ export async function removeRole(
   targetUserId: string,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Record<string, never>>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     _removeRole(caller, workspaceId, targetUserId);
     return {};
@@ -442,7 +454,7 @@ export async function listRoles(
   workspaceId: WorkspaceId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Role[]>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     return _listRoles(caller, workspaceId);
   });
@@ -461,7 +473,7 @@ export async function listPermissions(
   _accessToken?: string,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<Permission[]>> {
-  return _wrap(() => [...PERMISSIONS]);
+  return _wrap({ kind: 'none' }, () => [...PERMISSIONS]);
 }
 
 /**
@@ -486,7 +498,7 @@ export async function checkPermission(
   permission: PermissionKey,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<{ has: boolean }>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     // Caller must be a member of the workspace to query permissions in it.
     _requireMember(caller, workspaceId);
@@ -517,28 +529,37 @@ export async function inviteMember(
   roleId: RoleId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<InvitationView>> {
-  return _wrap(async () => {
+  const result = await _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     const inv = _inviteMember(caller, workspaceId, inviteeUserId, roleId);
-    // Per §12: inviteMember calls Mail.sendInvitationEmail through Mail's
-    // public interface (§17 frozen interface — positional args).
     const ws = _getWorkspace(caller, workspaceId);
-    const role = _getRoleById(inv.roleId);
     const inviterIdentity = await _resolveIdentity(caller.userId);
-    const inviteUrl = _buildInviteUrl(inv.token);
-    // §17 interface: sendInvitationEmail(workspaceId, to, invitationToken,
-    // inviterName, workspaceName). invitationToken is the same URL string
-    // the provisional stub called inviteUrl — naming change only.
-    await Mail.sendInvitationEmail(
-      ws.id,
-      (await _resolveIdentity(inviteeUserId)).email ?? '',
-      inviteUrl,
-      inviterIdentity.email ?? '',
-      ws.name
-    );
-    return _toInvitationView(inv, /* includeToken */ true);
-    void role;
+    const inviteeIdentity = await _resolveIdentity(inviteeUserId);
+    return {
+      invitation: _toInvitationView(inv, /* includeToken */ true),
+      mail: {
+        workspaceId: ws.id,
+        to: inviteeIdentity.email ?? '',
+        token: _buildInviteUrl(inv.token),
+        inviter: inviterIdentity.email ?? '',
+        workspaceName: ws.name,
+      },
+    };
   });
+  if (!result.success) return result;
+  const { invitation, mail } = result.data;
+  try {
+    await Mail.sendInvitationEmail(
+      mail.workspaceId,
+      mail.to,
+      mail.token,
+      mail.inviter,
+      mail.workspaceName
+    );
+  } catch {
+    return fail(OrgErrorCode.INTERNAL_ERROR, 'An internal error occurred.');
+  }
+  return ok(invitation);
 }
 
 export async function acceptInvitation(
@@ -546,7 +567,7 @@ export async function acceptInvitation(
   token: string,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<{ workspaceId: WorkspaceId; invitation: InvitationView }>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'invitation', token }, async () => {
     const caller = await _resolveCaller(accessToken);
     const { invitation, workspaceId } = _acceptInvitation(caller, token);
     return {
@@ -561,7 +582,7 @@ export async function declineInvitation(
   token: string,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<InvitationView>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'invitation', token }, async () => {
     const caller = await _resolveCaller(accessToken);
     const inv = _declineInvitation(caller, token);
     return _toInvitationView(inv, /* includeToken */ false);
@@ -574,7 +595,7 @@ export async function cancelInvitation(
   invitationId: string,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<InvitationView>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     const inv = _cancelInvitation(caller, workspaceId, invitationId);
     return _toInvitationView(inv, /* includeToken */ false);
@@ -587,25 +608,37 @@ export async function resendInvitation(
   invitationId: string,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<InvitationView>> {
-  return _wrap(async () => {
+  const result = await _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     const inv = _resendInvitation(caller, workspaceId, invitationId);
-    // Re-send via Mail (§17 frozen interface — positional args).
     const ws = _getWorkspace(caller, workspaceId);
     const inviterIdentity = await _resolveIdentity(caller.userId);
     const inviteeIdentity = await _resolveIdentity(inv.inviteeUserId);
-    // §17 interface: sendInvitationEmail(workspaceId, to, invitationToken,
-    // inviterName, workspaceName). invitationToken is the same URL string
-    // the provisional stub called inviteUrl — naming change only.
-    await Mail.sendInvitationEmail(
-      ws.id,
-      inviteeIdentity.email ?? '',
-      _buildInviteUrl(inv.token),
-      inviterIdentity.email ?? '',
-      ws.name
-    );
-    return _toInvitationView(inv, /* includeToken */ true);
+    return {
+      invitation: _toInvitationView(inv, /* includeToken */ true),
+      mail: {
+        workspaceId: ws.id,
+        to: inviteeIdentity.email ?? '',
+        token: _buildInviteUrl(inv.token),
+        inviter: inviterIdentity.email ?? '',
+        workspaceName: ws.name,
+      },
+    };
   });
+  if (!result.success) return result;
+  const { invitation, mail } = result.data;
+  try {
+    await Mail.sendInvitationEmail(
+      mail.workspaceId,
+      mail.to,
+      mail.token,
+      mail.inviter,
+      mail.workspaceName
+    );
+  } catch {
+    return fail(OrgErrorCode.INTERNAL_ERROR, 'An internal error occurred.');
+  }
+  return ok(invitation);
 }
 
 export async function listInvitations(
@@ -613,7 +646,7 @@ export async function listInvitations(
   workspaceId: WorkspaceId,
   _ctx?: WorkspaceContext
 ): Promise<StandardResponse<InvitationView[]>> {
-  return _wrap(async () => {
+  return _wrap({ kind: 'workspace', workspaceId }, async () => {
     const caller = await _resolveCaller(accessToken);
     const invs = _listInvitations(caller, workspaceId);
     // Token is only surfaced to inviter + Owners.
