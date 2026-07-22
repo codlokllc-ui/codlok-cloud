@@ -60,6 +60,24 @@ export interface AuditEventView {
   metadata: Record<string, string | number | boolean | null>;
 }
 
+export type PlatformJobStatus = 'queued' | 'running' | 'retry_scheduled' | 'completed' | 'dead_letter';
+
+export interface PlatformJobView {
+  jobId: string;
+  module: string;
+  jobType: string;
+  status: PlatformJobStatus;
+  attemptCount: number;
+  maxAttempts: number;
+  replayCount: number;
+  runAfter: string;
+  lastErrorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  deadLetteredAt: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helper
 // ---------------------------------------------------------------------------
@@ -335,6 +353,25 @@ export const observabilityApi = {
     return apiCall<{ success: boolean; data?: { items: AuditEventView[]; nextCursor: string | null; hasMore: boolean }; error?: { code: string; message: string } }>(
       withQuery(`/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/observability/events`, { before, limit }),
       { headers: authHeader(accessToken) }
+    );
+  },
+};
+
+export const jobsApi = {
+  async list(accessToken: string, workspaceId: string, status?: PlatformJobStatus) {
+    return apiCall<{ success: boolean; data?: { items: PlatformJobView[] }; error?: { code: string; message: string } }>(
+      withQuery(`/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/jobs`, { status }),
+      { headers: authHeader(accessToken) }
+    );
+  },
+  async replay(accessToken: string, workspaceId: string, jobId: string, reason: string) {
+    return apiCall<{
+      success: boolean;
+      data?: { jobId: string; status: 'queued' };
+      error?: { code: string; message: string };
+    }>(
+      `/api/control/v1/workspaces/${encodeURIComponent(workspaceId)}/jobs/${encodeURIComponent(jobId)}/replay`,
+      { method: 'POST', headers: authHeader(accessToken), body: JSON.stringify({ reason }) }
     );
   },
 };

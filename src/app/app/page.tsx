@@ -1,5 +1,5 @@
 'use client';
 
-import { Dashboard } from '../page';
+import { Dashboard } from '@/components/dashboard/dashboard';
 
 export default Dashboard;

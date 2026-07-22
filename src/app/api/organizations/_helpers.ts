@@ -67,6 +67,7 @@ function _httpStatusForError(code: string): number {
     case 'INVITATION_NOT_FOUND':
     case 'PERMISSION_NOT_FOUND':
     case 'USER_NOT_FOUND':
+    case 'SETTING_NOT_FOUND':
       return 404;
     case 'WORKSPACE_ALREADY_EXISTS':
     case 'ROLE_ALREADY_EXISTS':
